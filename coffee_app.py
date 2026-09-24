@@ -128,16 +128,16 @@ vis_limiting = {
     'palette': ['#8dd3c7', '#ffffb3', '#bebada', '#fb8072', '#80b1d3', '#fdb462', '#b3de69', '#fccde5', '#d9d9d9']
 }
 
-st.sidebar.header("Scenario & Layer Selection")
+st.sidebar.header("Layer Selection")
 
 # 1. Primary Scenario Selector
-scenario_mode = st.sidebar.radio(
+scenario_mode = st.select_slider(
     "Scenario Horizon",
-    (
+    options=[
         "Baseline Climatology (2000–2023)",
         "2050 SSP5-8.5 (Unmitigated)",
         "2050 SSP5-8.5 (Irrigated Adaptation)"
-    )
+    ]
 )
 
 # 2. Dynamic Single-Choice Layer Options based on Scenario
@@ -253,19 +253,19 @@ def add_continuous_legend(folium_map, title, palette, min_val, max_val, unit="")
 # ==============================================================================
 
 # 1. Sync viewport coordinates from the previous render BEFORE building folium.Map
-for k in st.session_state:
-    if k.startswith("map_") and isinstance(st.session_state[k], dict):
-        last_center = st.session_state[k].get("center")
-        last_zoom = st.session_state[k].get("zoom")
-        if last_center and isinstance(last_center, dict):
-            c_lat = last_center.get("lat")
-            c_lng = last_center.get("lng")
-            if c_lat is not None and c_lng is not None:
-                st.session_state.map_center = [c_lat, c_lng]
-        if last_zoom is not None:
-            st.session_state.map_zoom = last_zoom
+if "coffee_map" in st.session_state and isinstance(st.session_state["coffee_map"], dict):
+    last_center = st.session_state["coffee_map"].get("center")
+    last_zoom = st.session_state["coffee_map"].get("zoom")
+    if last_center and isinstance(last_center, dict):
+        c_lat = last_center.get("lat")
+        c_lng = last_center.get("lng")
+        if c_lat is not None and c_lng is not None:
+            st.session_state.map_center = [c_lat, c_lng]
+    if last_zoom is not None:
+        st.session_state.map_zoom = last_zoom
 
 # 2. Build the map using the updated viewport
+# Build the map base
 m = folium.Map(
     location=st.session_state.map_center,
     zoom_start=st.session_state.map_zoom,
@@ -273,7 +273,6 @@ m = folium.Map(
     attr='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 )
 
-# 3. Add the active layer based on the radio selection
 if "Baseline Suitability" in active_layer:
     add_ee_layer(m, layers['nat_suit_base'], vis_suitability, active_layer)
 elif "Limiting Factor (Baseline)" in active_layer:
@@ -292,7 +291,6 @@ elif "Irrigation Budget" in active_layer:
     add_ee_layer(m, layers['local_irrigation_budget'].selfMask(), vis_irrigation, active_layer)
 elif "Limiting Factor (Post-Irrigation)" in active_layer:
     add_ee_layer(m, layers['irrigated_limiting'], vis_limiting, active_layer)
-
     
 def render_st_gradient(label, palette, min_label, max_label, center_label=None):
     """Renders a continuous gradient bar with theme-adaptive white/light text."""
@@ -364,28 +362,21 @@ def compute_country_stats(lat, lon):
 col_map, col_legend = st.columns([3.8, 1.4])
 
 with col_map:
+    # Use a dynamic key so the component fully remounts when the layer changes.
+    # We omit "center" and "zoom" from returned_objects to stop drag lag!
     map_output = st_folium(
         m,
-        key=f"map_{active_layer}",
+        key=f"coffee_map_{active_layer}",
         width="100%",
         height=720,
-        returned_objects=["last_clicked", "center", "zoom"]
+        returned_objects=["last_clicked", "last_object_clicked"]
     )
 
-# If the user panned or zoomed, update the session state for the next render
-    if map_output:
-        # Check that center exists and actually has lat/lng
-        curr_center = map_output.get("center")
-        if curr_center and isinstance(curr_center, dict):
-            lat = curr_center.get("lat")
-            lng = curr_center.get("lng")
-            if lat is not None and lng is not None:
-                st.session_state.map_center = [lat, lng]
-
-        # Check zoom
-        curr_zoom = map_output.get("zoom")
-        if curr_zoom is not None:
-            st.session_state.map_zoom = curr_zoom
+# When a user clicks a country, update center to clicked point so the view stays anchored
+if map_output and map_output.get("last_clicked"):
+    click = map_output["last_clicked"]
+    if click.get("lat") is not None and click.get("lng") is not None:
+        st.session_state.map_center = [click["lat"], click["lng"]]
 
 with col_legend:
     st.subheader("Active Layer Legend")
