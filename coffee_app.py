@@ -5,6 +5,7 @@ from branca.element import Element
 import streamlit as st
 from streamlit_folium import st_folium
 import google.auth
+from matrix_analytics import render_dynamic_comparative_advantage_matrix
 
 # ==============================================================================
 # 1. PAGE SETUP & AUTHENTICATION
@@ -459,3 +460,16 @@ with col_legend:
                 st.warning("Clicked point is outside recognized boundaries.")
     else:
         st.caption("Click any country on the map to trigger spatial zonal statistics.")
+
+# ==============================================================================
+# 9. STRATEGIC DECISION MATRIX (CARS / BLADE PORTFOLIO VIEW)
+# Only displayed under Irrigated Adaptation (Scenario 3)
+# ==============================================================================
+if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
+    st.markdown("---")
+    st.subheader("Global Portfolio Competitiveness & Investment Risk")
+    st.markdown(
+        "Synthesizing biophysical irrigation needs with localized infrastructure Levelized Cost of Water (LCOW) "
+        "calculated dynamically for viable coffee adaptation zones (Thesis Figure 7)."
+    )
+    render_dynamic_comparative_advantage_matrix(layers)
