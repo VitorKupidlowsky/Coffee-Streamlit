@@ -50,20 +50,11 @@ def render_dynamic_comparative_advantage_matrix():
     # Extract dynamic country list from the CSV
     available_countries = sorted(df_raw['country'].unique().tolist())
     
-    # Target top 10 as default if present, otherwise all available
-    thesis_top_10 = [
-        'Brazil', 'Vietnam', 'Colombia', 'Ethiopia', 'Honduras', 
-        'Peru', 'Mexico', 'Guatemala', 'Nicaragua', 'Indonesia'
-    ]
-    default_selection = [c for c in thesis_top_10 if c in available_countries]
-    if not default_selection:
-        default_selection = available_countries[:10]
-
-    # CARS: Audience-Centered Country Filter
+    # Show every country available in the export by default.
     selected_countries = st.multiselect(
         "Select Countries to Display on Adaptation Matrix:",
         options=available_countries,
-        default=default_selection,
+        default=available_countries,
         help="Add or remove producer nations dynamically from the CSV dataset."
     )
 

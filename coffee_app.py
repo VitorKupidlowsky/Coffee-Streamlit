@@ -472,4 +472,4 @@ if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
         "Synthesizing biophysical irrigation needs with localized infrastructure Levelized Cost of Water (LCOW) "
         "calculated dynamically for viable coffee adaptation zones (Thesis Figure 7)."
     )
-    render_dynamic_comparative_advantage_matrix(layers)
+    render_dynamic_comparative_advantage_matrix()
