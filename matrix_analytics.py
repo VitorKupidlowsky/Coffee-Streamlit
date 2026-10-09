@@ -26,6 +26,31 @@ DEFAULT_COUNTRIES = [
     'Peru', 'Mexico', 'Guatemala', 'Nicaragua', 'Indonesia'
 ]
 
+# R2: Strategic archetype labels for the four quadrants (sentence case)
+QUADRANT_ARCHETYPES = {
+    'top_left': {
+        'text': 'Industrial volume adaptation',
+        'subtitle': 'High volume need, low unit cost',
+        'color': '#88bde6',
+    },
+    'bottom_left': {
+        'text': 'Prime adaptation zone',
+        'subtitle': 'Low cost, moderate deficit',
+        'color': '#a1d99b',
+    },
+    'top_right': {
+        'text': 'Capital & water constrained',
+        'subtitle': 'Prohibitive infrastructure cost',
+        'color': '#fdae6b',
+    },
+    'bottom_right': {
+        'text': 'Niche high-value adaptation',
+        'subtitle': 'Expensive water, low volume requirement',
+        'color': '#c4a882',
+    },
+}
+
+
 @st.cache_data
 def load_matrix_csv(modified_at):
     """
@@ -38,10 +63,81 @@ def load_matrix_csv(modified_at):
     return df
 
 
+@st.cache_data
+def get_global_medians(modified_at):
+    """
+    Compute global median and percentile benchmarks from the full CSV dataset.
+    Used by coffee_app.py for S2 magnitude gauge comparisons in the zonal panel.
+
+    Returns a dict with keys: lcow_median, lcow_p25, lcow_p75,
+    deficit_median, deficit_p25, deficit_p75, exposure_median.
+    Returns empty dict if CSV is unavailable.
+    """
+    df = load_matrix_csv(modified_at)
+    if df is None:
+        return {}
+    df = df.replace([float('inf'), float('-inf')], pd.NA)
+    df = df.dropna(subset=['avg_lcow', 'deficit_per_ha'])
+    if df.empty:
+        return {}
+    result = {
+        'lcow_median': float(df['avg_lcow'].median()),
+        'lcow_p25': float(df['avg_lcow'].quantile(0.25)),
+        'lcow_p75': float(df['avg_lcow'].quantile(0.75)),
+        'deficit_median': float(df['deficit_per_ha'].median()),
+        'deficit_p25': float(df['deficit_per_ha'].quantile(0.25)),
+        'deficit_p75': float(df['deficit_per_ha'].quantile(0.75)),
+    }
+    if 'total_exposure' in df.columns:
+        result['exposure_median'] = float(df['total_exposure'].median())
+    return result
+
+
+def _format_exposure(value):
+    """Format a dollar exposure value into a human-readable string."""
+    if pd.isna(value) or value == 0:
+        return "N/A"
+    abs_val = abs(value)
+    if abs_val >= 1e12:
+        return f"${value / 1e12:.1f}T"
+    elif abs_val >= 1e9:
+        return f"${value / 1e9:.1f}B"
+    elif abs_val >= 1e6:
+        return f"${value / 1e6:.1f}M"
+    else:
+        return f"${value:,.0f}"
+
+
+def _format_area(ha_value):
+    """Format hectares into Mha or kha."""
+    if pd.isna(ha_value) or ha_value == 0:
+        return "N/A"
+    if ha_value >= 1e6:
+        return f"{ha_value / 1e6:.1f}M ha"
+    elif ha_value >= 1e3:
+        return f"{ha_value / 1e3:.0f}k ha"
+    else:
+        return f"{ha_value:.0f} ha"
+
+
 def render_dynamic_comparative_advantage_matrix():
     """
     Renders the thesis Figure 7 matrix directly from the exported CSV dataset
     using CARS/BLADE communication principles.
+
+    BLADE iterations applied:
+    - B3: Capital exposure equation shown in explode drawer
+    - L2: Axis guidance subtitles with causal interpretation
+    - A1: Focal producer spotlight mode
+    - A2: Quadrant background risk shading
+    - D1: Median reference line value labels
+    - D2: Economic feasibility ceiling at $1.00/m³
+    - E1: Country drill-down explode drawer
+    - E3: Full portfolio comparison table
+
+    CARS iterations applied:
+    - R1/R2: Sentence-case strategic archetype quadrant labels
+    - S1: Full-sentence slide title with "so what" anchor
     """
     modified_at = os.path.getmtime(CSV_PATH) if os.path.exists(CSV_PATH) else None
     df_raw = load_matrix_csv(modified_at)
@@ -49,30 +145,49 @@ def render_dynamic_comparative_advantage_matrix():
     if df_raw is None:
         st.error(
             f"File `{CSV_FILENAME}` not found. "
-            "Please run Cell 20 in `Code_Python.ipynb` with `final_stats.to_csv('coffee_adaptation_matrix.csv')` "
+            "Please run Cell 20 in `Code_Python.ipynb` with "
+            "`final_stats.to_csv('coffee_adaptation_matrix.csv')` "
             "and place the CSV in the same folder as `coffee_app.py`."
         )
         return
 
     # Extract dynamic country list from the CSV
     available_countries = sorted(df_raw['country'].unique().tolist())
-    
+
     # Start with the original producer set, while leaving all CSV countries selectable.
-    default_selection = [country for country in DEFAULT_COUNTRIES if country in available_countries]
+    default_selection = [
+        country for country in DEFAULT_COUNTRIES
+        if country in available_countries
+    ]
     if not default_selection:
         default_selection = available_countries[:10]
 
-    selected_countries = st.multiselect(
-        "Select Countries to Display on Adaptation Matrix:",
-        options=available_countries,
-        default=default_selection,
-        key="matrix_country_selection_top10_default",
-        help="Add or remove producer nations dynamically from the CSV dataset."
-    )
+    # --- Controls Row ---
+    ctrl_left, ctrl_right = st.columns([2, 1])
+
+    with ctrl_left:
+        selected_countries = st.multiselect(
+            "Select countries to display on adaptation matrix",
+            options=available_countries,
+            default=default_selection,
+            key="matrix_country_selection_top10_default",
+            help="Add or remove producer nations dynamically from the CSV dataset.",
+        )
 
     if not selected_countries:
         st.info("Please select at least one country to display on the matrix.")
         return
+
+    # A1 Spotlight: Focal producer selector
+    with ctrl_right:
+        focal_options = ["All (no spotlight)"] + sorted(selected_countries)
+        focal_producer = st.selectbox(
+            "Spotlight a producer",
+            options=focal_options,
+            index=0,
+            key="focal_producer_selector",
+            help="Highlight a single producer; others are muted for focused comparison.",
+        )
 
     # Filter dataframe to user selection
     df = df_raw[df_raw['country'].isin(selected_countries)].copy()
@@ -80,7 +195,9 @@ def render_dynamic_comparative_advantage_matrix():
     df = df.dropna(subset=['avg_lcow', 'deficit_per_ha', 'total_viable_ha'])
 
     if df.empty:
-        st.warning("The selected countries do not have valid cost, demand, and footprint data.")
+        st.warning(
+            "The selected countries do not have valid cost, demand, and footprint data."
+        )
         return
 
     # Dynamic scaling based on maximum viable footprint in current view
@@ -88,19 +205,78 @@ def render_dynamic_comparative_advantage_matrix():
     if pd.isna(max_area) or max_area <= 0:
         max_area = 1.0
 
+    # Recalculate the reference split from the currently selected countries.
+    x_mid = float(df['avg_lcow'].median())
+    y_mid = float(df['deficit_per_ha'].median())
+
+    # Fit axes and tick spacing to the selected values instead of fixed thesis bounds.
+    x_data_max = max(float(df['avg_lcow'].max()), 0.0)
+    y_data_max = max(float(df['deficit_per_ha'].max()), 0.0)
+    x_max = max(x_data_max * 1.12, 0.1)
+    y_max = max(y_data_max * 1.12, 1.0)
+
+    # ==================================================================
     # Build Plotly Figure
+    # ==================================================================
     fig = go.Figure()
 
+    # A2: Subtle quadrant risk shading
+    quadrant_shapes = [
+        # Top-Left: Industrial volume adaptation (blue tint)
+        dict(
+            type="rect", x0=0, x1=x_mid, y0=y_mid, y1=y_max,
+            fillcolor="rgba(59,130,246,0.04)",
+            line=dict(width=0), layer="below",
+        ),
+        # Bottom-Left: Prime adaptation zone (green tint)
+        dict(
+            type="rect", x0=0, x1=x_mid, y0=0, y1=y_mid,
+            fillcolor="rgba(34,197,94,0.05)",
+            line=dict(width=0), layer="below",
+        ),
+        # Top-Right: Capital & water constrained (red tint)
+        dict(
+            type="rect", x0=x_mid, x1=x_max, y0=y_mid, y1=y_max,
+            fillcolor="rgba(239,68,68,0.06)",
+            line=dict(width=0), layer="below",
+        ),
+        # Bottom-Right: Niche high-value (amber tint)
+        dict(
+            type="rect", x0=x_mid, x1=x_max, y0=0, y1=y_mid,
+            fillcolor="rgba(245,158,11,0.04)",
+            line=dict(width=0), layer="below",
+        ),
+    ]
+
+    # Build scatter traces with spotlight support (A1)
     for _, row in df.iterrows():
         c_name = row['country']
-        
-        # Color accentuation
-        bubble_color = PRODUCER_COLORS.get(
-            c_name, 
-            '#2b8cbe' if str(row.get('region')) == 'Americas' else (
-                '#31a354' if str(row.get('region')) == 'Africa' else '#ff7f0e'
-            )
+        is_focal = (
+            focal_producer == "All (no spotlight)" or c_name == focal_producer
         )
+
+        # Color accentuation with spotlight muting
+        if is_focal:
+            bubble_color = PRODUCER_COLORS.get(
+                c_name,
+                '#2b8cbe' if str(row.get('region')) == 'Americas' else (
+                    '#31a354' if str(row.get('region')) == 'Africa'
+                    else '#ff7f0e'
+                ),
+            )
+            opacity = 0.88
+            text_color = "#ffffff"
+            border_color = "#ffffff"
+        else:
+            bubble_color = '#4b5563'
+            opacity = 0.35
+            text_color = '#6b7280'
+            border_color = '#4b5563'
+
+        area_display = row.get(
+            'area_mha', round(row['total_viable_ha'] / 1e6, 1)
+        )
+        exposure_display = _format_exposure(row.get('total_exposure', 0))
 
         fig.add_trace(go.Scatter(
             x=[row['avg_lcow']],
@@ -109,97 +285,246 @@ def render_dynamic_comparative_advantage_matrix():
             name=c_name,
             text=[c_name],
             textposition="top center",
-            textfont=dict(size=12, family="Arial", color="#ffffff"),
+            textfont=dict(size=12, family="Arial", color=text_color),
             marker=dict(
                 size=[row['total_viable_ha']],
                 sizemode="area",
                 sizeref=2.0 * max_area / (55.0 ** 2),
                 sizemin=10,
                 color=bubble_color,
-                opacity=0.88,
-                line=dict(width=1.5, color="#ffffff")
+                opacity=opacity,
+                line=dict(width=1.5, color=border_color),
             ),
             hovertemplate=(
-                f"<b>{c_name}</b><br>" +
-                "Avg Irrigation Cost: <b>$%{x:.2f}/m³</b><br>" +
-                "Avg Irrigation Demand: <b>%{y:.1f} m³/viable ha</b><br>" +
-                f"Total Viable Footprint: <b>{row.get('area_mha', round(row['total_viable_ha']/1e6, 1))}M ha</b>" +
-                "<extra></extra>"
+                f"<b>{c_name}</b><br>"
+                + "Avg irrigation cost: <b>$%{x:.2f}/m³</b><br>"
+                + "Avg irrigation demand: <b>%{y:.1f} m³/viable ha</b><br>"
+                + f"Total viable footprint: <b>{area_display}M ha</b><br>"
+                + f"National adaptation exposure: <b>{exposure_display}</b>"
+                + "<extra></extra>"
             ),
-            showlegend=True
+            showlegend=True,
         ))
 
-    # Recalculate the reference split from the currently selected countries.
-    x_mid = float(df['avg_lcow'].median())
-    y_mid = float(df['deficit_per_ha'].median())
-    fig.add_vline(x=x_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98")
-    fig.add_hline(y=y_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98")
-
-    # Keep short quadrant labels in the corners, independent of the data scale.
-    fig.add_annotation(
-        x=0.02, y=0.98, xref="paper", yref="paper", xanchor="left", yanchor="top",
-        text="<b>HIGHER DEMAND · LOWER COST</b>", showarrow=False,
-        font=dict(size=10, color="#88bde6"), align="left",
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3
+    # D1: Median reference lines with anchored value labels
+    fig.add_vline(
+        x=x_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98"
     )
-    fig.add_annotation(
-        x=0.02, y=0.02, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-        text="<b>LOWER DEMAND · LOWER COST</b>", showarrow=False,
-        font=dict(size=10, color="#a1d99b"), align="left",
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3
-    )
-    fig.add_annotation(
-        x=0.98, y=0.98, xref="paper", yref="paper", xanchor="right", yanchor="top",
-        text="<b>HIGHER DEMAND · HIGHER COST</b>", showarrow=False,
-        font=dict(size=10, color="#fdae6b"), align="right",
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3
-    )
-    fig.add_annotation(
-        x=0.98, y=0.02, xref="paper", yref="paper", xanchor="right", yanchor="bottom",
-        text="<b>LOWER DEMAND · HIGHER COST</b>", showarrow=False,
-        font=dict(size=10, color="#fdae6b"), align="right",
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3
+    fig.add_hline(
+        y=y_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98"
     )
 
-    # Fit axes and tick spacing to the selected values instead of fixed thesis bounds.
-    x_data_max = max(float(df['avg_lcow'].max()), 0.0)
-    y_data_max = max(float(df['deficit_per_ha'].max()), 0.0)
-    x_max = max(x_data_max * 1.12, 0.1)
-    y_max = max(y_data_max * 1.12, 1.0)
+    fig.add_annotation(
+        x=x_mid, y=1.02, yref="paper",
+        xanchor="center", yanchor="bottom",
+        text=f"Median LCOW: ${x_mid:.2f}/m³",
+        showarrow=False,
+        font=dict(size=9, color="#8a8f98"),
+        bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+    )
+    fig.add_annotation(
+        x=1.0, xref="paper", y=y_mid,
+        xanchor="left", yanchor="middle",
+        text=f"  Median deficit: {y_mid:,.0f} m³/ha",
+        showarrow=False,
+        font=dict(size=9, color="#8a8f98"),
+        bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+    )
 
-    # CARS Layout Styling
+    # D2: Economic feasibility ceiling at $1.00/m³
+    if x_max > 1.0:
+        fig.add_vline(
+            x=1.0, line_width=1.5, line_dash="dot", line_color="#ef4444"
+        )
+        fig.add_annotation(
+            x=1.0, y=0.96, yref="paper",
+            xanchor="left", yanchor="top",
+            text="  Economic feasibility<br>  ceiling ($1.00/m³)",
+            showarrow=False,
+            font=dict(size=9, color="#ef4444"),
+            bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+        )
+
+    # R1/R2: Strategic archetype quadrant labels (sentence case)
+    positions = [
+        ('top_left',     dict(x=0.02, y=0.98, xanchor="left",  yanchor="top")),
+        ('bottom_left',  dict(x=0.02, y=0.02, xanchor="left",  yanchor="bottom")),
+        ('top_right',    dict(x=0.98, y=0.98, xanchor="right", yanchor="top")),
+        ('bottom_right', dict(x=0.98, y=0.02, xanchor="right", yanchor="bottom")),
+    ]
+    for key, pos in positions:
+        q = QUADRANT_ARCHETYPES[key]
+        align = "left" if pos['xanchor'] == "left" else "right"
+        fig.add_annotation(
+            x=pos['x'], y=pos['y'],
+            xref="paper", yref="paper",
+            xanchor=pos['xanchor'], yanchor=pos['yanchor'],
+            text=(
+                f"<b>{q['text']}</b><br>"
+                f"<span style='font-size:9px;'>{q['subtitle']}</span>"
+            ),
+            showarrow=False,
+            font=dict(size=10, color=q['color']),
+            align=align,
+            bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+        )
+
+    # S1: Full-sentence chart title  &  L2: Axis guidance subtitles
     fig.update_layout(
         title={
-            "text": "<b>Global Comparative Advantage Matrix (The Adaptation Premium)</b><br>" +
-                    "<span style='font-size:12px; color:#cccccc;'>Data source: coffee_adaptation_matrix.csv (Notebook Cell 20).</span>",
+            "text": (
+                "<b>Irrigation feasibility bifurcates between "
+                "volume-heavy Latin America and capital-constrained "
+                "East Africa</b><br>"
+                "<span style='font-size:11px; color:#9ca3af;'>"
+                "Data source: coffee_adaptation_matrix.csv · "
+                "Bubble size ∝ total viable adaptation footprint (ha)"
+                "</span>"
+            ),
             "x": 0.02,
-            "xanchor": "left"
+            "xanchor": "left",
         },
         xaxis=dict(
-            title="<b>Average Irrigation Cost ($/m³)</b>",
+            title=(
+                "<b>Average irrigation cost ($/m³)</b><br>"
+                "<span style='font-size:10px; color:#9ca3af;'>"
+                "→ Rightward: deeper aquifers, remote surface access, "
+                "higher pump energy costs</span>"
+            ),
             range=[0.0, x_max],
             gridcolor="#2c2f36",
-            zeroline=False
+            zeroline=False,
         ),
         yaxis=dict(
-            title="<b>Average Irrigation Demand (m³ / viable hectare)</b>",
+            title=(
+                "<b>Average irrigation demand (m³ / viable hectare)</b>"
+                "<br><span style='font-size:10px; color:#9ca3af;'>"
+                "↑ Upward: longer dry seasons, elevated atmospheric "
+                "vapor pressure deficit</span>"
+            ),
             range=[0, y_max],
             gridcolor="#2c2f36",
-            zeroline=False
+            zeroline=False,
         ),
+        shapes=quadrant_shapes,
         plot_bgcolor="#18191c",
         paper_bgcolor="#0e1117",
         legend=dict(
-            title=dict(text="<b>Producer</b>", font=dict(size=11, color="#ffffff")),
+            title=dict(
+                text="<b>Producer</b>",
+                font=dict(size=11, color="#ffffff"),
+            ),
             orientation="v",
             yanchor="top",
             y=1.0,
             xanchor="left",
             x=1.02,
-            font=dict(color="#ffffff")
+            font=dict(color="#ffffff"),
         ),
-        margin=dict(l=50, r=160, t=90, b=50),
-        height=620
+        margin=dict(l=80, r=160, t=100, b=80),
+        height=650,
     )
 
     st.plotly_chart(fig, width="stretch")
+
+    # ==================================================================
+    # E1: Country Explode Drawer — National adaptation exposure details
+    # ==================================================================
+    with st.expander(
+        ":material/analytics: Drill down — national adaptation exposure "
+        "& water supply details"
+    ):
+        # B3: Show the math — capital exposure equation
+        st.caption(
+            "**Exposure equation:** Viable area (ha) × Water deficit "
+            "(m³/ha) × LCOW (\\$/m³) = **Total national adaptation "
+            "exposure (\\$)**"
+        )
+
+        sorted_df = df.sort_values('total_exposure', ascending=False)
+        cols_per_row = 3
+        row_chunks = [
+            sorted_df.iloc[i:i + cols_per_row]
+            for i in range(0, len(sorted_df), cols_per_row)
+        ]
+
+        for chunk in row_chunks:
+            cols = st.columns(len(chunk))
+            for col, (_, row) in zip(cols, chunk.iterrows()):
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"**{row['country']}**")
+
+                        exposure = row.get('total_exposure', 0)
+                        viable_ha = row.get('total_viable_ha', 0)
+                        total_m3 = row.get('total_m3', 0)
+
+                        st.metric(
+                            "National adaptation exposure",
+                            _format_exposure(exposure),
+                        )
+                        st.metric(
+                            "Total viable footprint",
+                            _format_area(viable_ha),
+                        )
+                        if total_m3 >= 1e9:
+                            water_label = f"{total_m3 / 1e9:.1f}B m³"
+                        else:
+                            water_label = f"{total_m3 / 1e6:.0f}M m³"
+                        st.metric("Total water volume needed", water_label)
+                        st.metric(
+                            "Avg LCOW",
+                            f"${row['avg_lcow']:.2f}/m³",
+                        )
+                        st.metric(
+                            "Avg deficit",
+                            f"{row['deficit_per_ha']:,.0f} m³/ha",
+                        )
+
+    # ==================================================================
+    # E3: Full Portfolio Comparison Table
+    # ==================================================================
+    with st.expander(
+        ":material/table_chart: Full portfolio comparison table"
+    ):
+        display_cols = [
+            'country', 'total_viable_ha', 'deficit_per_ha',
+            'avg_lcow', 'total_m3', 'total_exposure',
+        ]
+        available_cols = [c for c in display_cols if c in df.columns]
+        display_df = df[available_cols].copy()
+
+        col_rename = {
+            'country': 'Country',
+            'total_viable_ha': 'Viable area (ha)',
+            'deficit_per_ha': 'Deficit (m³/ha)',
+            'avg_lcow': 'Avg LCOW ($/m³)',
+            'total_m3': 'Total water (m³)',
+            'total_exposure': 'Total exposure ($)',
+        }
+        display_df = display_df.rename(columns=col_rename)
+        display_df = display_df.sort_values(
+            'Total exposure ($)', ascending=False
+        )
+
+        col_config = {
+            'Country': st.column_config.TextColumn(width="medium"),
+        }
+        num_formats = {
+            'Viable area (ha)': "%,.0f",
+            'Deficit (m³/ha)': "%,.0f",
+            'Avg LCOW ($/m³)': "$%.2f",
+            'Total water (m³)': "%,.0f",
+            'Total exposure ($)': "$%,.0f",
+        }
+        for col_name, fmt in num_formats.items():
+            if col_name in display_df.columns:
+                col_config[col_name] = st.column_config.NumberColumn(
+                    format=fmt
+                )
+
+        st.dataframe(
+            display_df,
+            hide_index=True,
+            column_config=col_config,
+        )

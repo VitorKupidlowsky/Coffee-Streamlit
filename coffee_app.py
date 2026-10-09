@@ -5,19 +5,44 @@ from branca.element import Element
 import streamlit as st
 from streamlit_folium import st_folium
 import google.auth
-from matrix_analytics import render_dynamic_comparative_advantage_matrix
+from matrix_analytics import (
+    render_dynamic_comparative_advantage_matrix,
+    get_global_medians,
+    CSV_PATH,
+)
 
 # ==============================================================================
 # 1. PAGE SETUP & AUTHENTICATION
 # ==============================================================================
 st.set_page_config(
     page_title="Coffea arabica Climate Adaptation Engine",
-    page_icon="☕",
+    page_icon=":material/eco:",
     layout="wide"
 )
 
 st.title("The Adaptation Premium: Global Coffea Arabica GIS Analysis")
-st.markdown("Interactive techno-economic spatial analysis under baseline and CMIP6 SSP5-8.5 warming scenarios.")
+st.markdown(
+    "Interactive techno-economic spatial analysis under baseline and "
+    "CMIP6 SSP5-8.5 warming scenarios."
+)
+
+# A1 Executive Banner: Key insight callout at page top
+st.info(
+    "**Key insight:** Under SSP5-8.5 warming, equatorial lowland Arabica zones "
+    "face severe moisture deficits by 2050. Irrigation can biophysically recover "
+    "significant viable area, but adaptation viability bifurcates — Latin America "
+    "benefits from favorable water economics, while parts of East Africa and "
+    "Southeast Asia face elevated infrastructure capital hurdles.",
+    icon=":material/insights:",
+)
+
+# C1: Peer-reviewed methodological attribution
+st.caption(
+    ":material/school: **Data sources:** Earth Engine TerraClimate / CMIP6 "
+    "SSP5-8.5 ensemble · WRI Aqueduct 4.0 water stress projections · "
+    "Superwell techno-economic groundwater model · "
+    "FAO harmonized world soil database"
+)
 
 @st.cache_resource
 def initialize_ee():
@@ -126,10 +151,11 @@ vis_water_source = {'min': 0, 'max': 1, 'palette': ['#a6cee3', '#1f78b4']}  # 0:
 vis_gw_depth = {'min': 3, 'max': 150, 'palette': ['#e0f3f8', '#abd9e9', '#74add1', '#4575b4', '#313695']}
 vis_water_stress = {'min': 1, 'max': 5, 'palette': ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']}
 
+# A3 (CARS): Descriptive labels without numbered prefixes (sentence case)
 limiting_labels = [
-    "1. Soil Depth", "2. Slope", "3. Texture", "4. pH",
-    "5. Annual Mean Temp", "6. Min Temp Coldest Month",
-    "7. Annual Precip", "8. Dry Season Duration", "9. Relative Humidity"
+    "Soil depth", "Slope", "Soil texture", "Soil pH",
+    "Annual mean temperature", "Coldest month minimum",
+    "Annual precipitation", "Dry season duration", "Relative humidity"
 ]
 limiting_colors = [
     '#8dd3c7', '#ffffb3', '#bebada', '#fb8072', '#80b1d3',
@@ -137,18 +163,18 @@ limiting_colors = [
 ]
 
 water_stress_labels = [
-    "1. Low (<10%)", "2. Low-Medium (10–20%)", "3. Medium-High (20–40%)",
-    "4. High (40–80%)", "5. Extremely High (>80%)"
+    "Low (<10%)", "Low-medium (10–20%)", "Medium-high (20–40%)",
+    "High (40–80%)", "Extremely high (>80%)"
 ]
 water_stress_colors = ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']
 
 # ==============================================================================
 # 5. SIDEBAR SELECTION (CARS/BLADE HIERARCHICAL STRUCTURE)
 # ==============================================================================
-st.sidebar.header("Scenario & Layer Controls")
+st.sidebar.header("Scenario & layer controls")
 
 scenario_mode = st.sidebar.select_slider(
-    "Scenario Horizon",
+    "Scenario horizon",
     options=[
         "Baseline Climatology (2000–2023)",
         "2050 SSP5-8.5 (Unmitigated)",
@@ -158,7 +184,7 @@ scenario_mode = st.sidebar.select_slider(
 
 if scenario_mode == "Baseline Climatology (2000–2023)":
     active_layer = st.sidebar.radio(
-        "Active Map Layer",
+        "Active map layer",
         [
             "1. Baseline Suitability Score (0–100)",
             "2. Limiting Factor (Baseline)"
@@ -167,7 +193,7 @@ if scenario_mode == "Baseline Climatology (2000–2023)":
 
 elif scenario_mode == "2050 SSP5-8.5 (Unmitigated)":
     active_layer = st.sidebar.radio(
-        "Active Map Layer",
+        "Active map layer",
         [
             "1. Future Suitability (2050 SSP5-8.5)",
             "2. Delta Suitability (Future - Baseline)",
@@ -177,13 +203,13 @@ elif scenario_mode == "2050 SSP5-8.5 (Unmitigated)":
 
 elif scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
     adaptation_domain = st.sidebar.radio(
-        "Analysis Domain",
+        "Analysis domain",
         ["Biophysical Recovery", "Techno-Economic & Hydrology"]
     )
 
     if adaptation_domain == "Biophysical Recovery":
         active_layer = st.sidebar.radio(
-            "Active Map Layer",
+            "Active map layer",
             [
                 "1. Irrigated Suitability (2050)",
                 "2. Points Recovered via Irrigation",
@@ -193,7 +219,7 @@ elif scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
         )
     else:
         active_layer = st.sidebar.radio(
-            "Active Map Layer",
+            "Active map layer",
             [
                 "1. Levelized Cost of Water (LCOW, $/m³)",
                 "2. Water Source Selection (Surface vs. Groundwater)",
@@ -313,6 +339,9 @@ def compute_country_stats(lat, lon):
     except Exception as e:
         return {"error": str(e)}
 
+
+# R3: Theme-adaptive legend rendering (uses inherited text color instead of
+# hardcoded #ffffff so the legend works in both light and dark themes).
 def render_st_gradient(label, palette, min_label, max_label, center_label=None):
     """Renders a continuous gradient bar with theme-adaptive styling."""
     grad = ", ".join(palette)
@@ -320,15 +349,30 @@ def render_st_gradient(label, palette, min_label, max_label, center_label=None):
     st.markdown(
         f"""
         <div style="margin-bottom: 14px;">
-            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #ffffff;">{label}</div>
+            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">{label}</div>
             <div style="width: 100%; height: 14px; background: linear-gradient(to right, {grad}); border: 1px solid #777; border-radius: 3px;"></div>
-            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; color: #d0d4dc;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; opacity: 0.75;">
                 <span>{min_label}</span>{center_html}<span>{max_label}</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
+
+
+def render_categorical_legend(title, colors, labels):
+    """Renders a categorical legend with color swatches (theme-adaptive text)."""
+    st.markdown(f"**{title}**")
+    for c, lbl in zip(colors, labels):
+        st.markdown(
+            f"""
+            <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                <span style="background: {c}; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 1px solid #777; border-radius: 2px;"></span>
+                <span style="font-size: 12px;">{lbl}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # ==============================================================================
 # 8. STREAMLIT DISPLAY WITH MULTI-PANEL LAYOUT
@@ -350,116 +394,223 @@ if map_output and map_output.get("last_clicked"):
         st.session_state.map_center = [click["lat"], click["lng"]]
 
 with col_legend:
-    st.subheader("Active Layer Legend")
+    # C2: Visual enclosure — legend section in bordered container
+    with st.container(border=True):
+        st.markdown("**Active layer legend**")
 
-    if "Suitability" in active_layer:
-        render_st_gradient(active_layer, vis_suitability['palette'], "0 (Unsuitable)", "100 (Optimal)")
-    elif "Delta Suitability" in active_layer:
-        render_st_gradient(active_layer, vis_delta['palette'], "-100 (Loss)", "+100 (Gain)", center_label="0")
-    elif "Points Recovered" in active_layer:
-        render_st_gradient(active_layer, vis_benefit['palette'], "+1 pt", "+50 pts")
-    elif "Irrigation Budget" in active_layer:
-        render_st_gradient(active_layer, vis_irrigation['palette'], "1 mm", "300 mm")
-    elif "Limiting Factor" in active_layer:
-        st.markdown(f"**{active_layer}**")
-        for c, lbl in zip(limiting_colors, limiting_labels):
-            st.markdown(
-                f"""
-                <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                    <span style="background: {c}; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 1px solid #777; border-radius: 2px;"></span>
-                    <span style="font-size: 12px; color: #ffffff;">{lbl}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
+        if "Suitability" in active_layer:
+            render_st_gradient(
+                active_layer, vis_suitability['palette'],
+                "0 (Unsuitable)", "100 (Optimal)"
             )
-    elif "LCOW" in active_layer:
-        render_st_gradient("Levelized Cost of Water", vis_lcow['palette'], "≤ $0.25/m³", "≥ $2.00/m³", center_label="$0.80/m³")
-    elif "Water Source Selection" in active_layer:
-        st.markdown(f"**{active_layer}**")
-        st.markdown(
-            """
-            <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                <span style="background: #a6cee3; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 1px solid #777; border-radius: 2px;"></span>
-                <span style="font-size: 12px; color: #ffffff;">Surface Water</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                <span style="background: #1f78b4; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 1px solid #777; border-radius: 2px;"></span>
-                <span style="font-size: 12px; color: #ffffff;">Groundwater</span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    elif "Aquifer Depth" in active_layer:
-        render_st_gradient("Groundwater Aquifer Depth", vis_gw_depth['palette'], "3 m (Shallow)", "150 m (Deep)")
-    elif "WRI Projected Water Stress" in active_layer:
-        st.markdown(f"**{active_layer}**")
-        for c, lbl in zip(water_stress_colors, water_stress_labels):
-            st.markdown(
-                f"""
-                <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                    <span style="background: {c}; width: 13px; height: 13px; display: inline-block; margin-right: 8px; border: 1px solid #777; border-radius: 2px;"></span>
-                    <span style="font-size: 12px; color: #ffffff;">{lbl}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
+        elif "Delta Suitability" in active_layer:
+            render_st_gradient(
+                active_layer, vis_delta['palette'],
+                "-100 (Loss)", "+100 (Gain)", center_label="0"
+            )
+        elif "Points Recovered" in active_layer:
+            render_st_gradient(
+                active_layer, vis_benefit['palette'],
+                "+1 pt", "+50 pts"
+            )
+        elif "Irrigation Budget" in active_layer:
+            render_st_gradient(
+                active_layer, vis_irrigation['palette'],
+                "1 mm", "300 mm"
+            )
+        elif "Limiting Factor" in active_layer:
+            render_categorical_legend(
+                active_layer, limiting_colors, limiting_labels
+            )
+        elif "LCOW" in active_layer:
+            render_st_gradient(
+                "Levelized cost of water",
+                vis_lcow['palette'],
+                "≤ \\$0.25/m³", "≥ \\$2.00/m³",
+                center_label="\\$0.80/m³"
+            )
+        elif "Water Source Selection" in active_layer:
+            render_categorical_legend(
+                active_layer,
+                ['#a6cee3', '#1f78b4'],
+                ['Surface water', 'Groundwater']
+            )
+        elif "Aquifer Depth" in active_layer:
+            render_st_gradient(
+                "Groundwater aquifer depth",
+                vis_gw_depth['palette'],
+                "3 m (Shallow)", "150 m (Deep)"
+            )
+        elif "WRI Projected Water Stress" in active_layer:
+            render_categorical_legend(
+                active_layer,
+                water_stress_colors, water_stress_labels
             )
 
-    st.markdown("---")
-    st.subheader("Country Zonal Analytics")
+    # C2: Visual enclosure — zonal analytics section
+    with st.container(border=True):
+        st.markdown("**Country zonal analytics**")
 
-    click_data = map_output.get("last_clicked") if map_output else None
+        click_data = map_output.get("last_clicked") if map_output else None
 
-    if click_data:
-        lat = click_data.get("lat")
-        lon = click_data.get("lng") or click_data.get("lon")
+        if click_data:
+            lat = click_data.get("lat")
+            lon = click_data.get("lng") or click_data.get("lon")
 
-        if lat is not None and lon is not None:
-            with st.spinner(f"Computing zonal metrics for ({lat:.2f}, {lon:.2f})..."):
-                data = compute_country_stats(lat, lon)
+            if lat is not None and lon is not None:
+                with st.spinner(
+                    f"Computing zonal metrics for ({lat:.2f}, {lon:.2f})..."
+                ):
+                    data = compute_country_stats(lat, lon)
 
-            if data and "error" in data:
-                st.error(f"Computation failed: {data['error']}")
-            elif data and data.get('country'):
-                st.success(f"**{data['country']}**")
+                if data and "error" in data:
+                    st.error(f"Computation failed: {data['error']}")
+                elif data and data.get('country'):
+                    st.success(f"**{data['country']}**")
 
-                def fmt(val, unit="", decimals=1):
-                    return f"{val:.{decimals}f} {unit}" if val is not None else "N/A"
+                    def fmt(val, unit="", decimals=1):
+                        return (
+                            f"{val:.{decimals}f} {unit}"
+                            if val is not None else "N/A"
+                        )
 
-                tab_bio, tab_econ = st.tabs(["Biophysical", "Techno-Economic"])
+                    tab_bio, tab_econ = st.tabs([
+                        ":material/eco: Biophysical",
+                        ":material/payments: Techno-economic",
+                    ])
 
-                with tab_bio:
-                    st.metric("Baseline Suitability", fmt(data['base_suit'], "pts"))
-                    st.metric(
-                        "2050 Future Suitability",
-                        fmt(data['fut_suit'], "pts"),
-                        delta=f"{data['delta_suit']:.1f} pts" if data['delta_suit'] is not None else None
+                    # ======================================================
+                    # B1: Adaptation pathway delta bridge
+                    # Shows Baseline → Climate Loss → Recovery as a flow
+                    # ======================================================
+                    with tab_bio:
+                        st.caption("**Adaptation pathway**")
+
+                        # Step 1: Baseline
+                        st.metric(
+                            "Baseline suitability",
+                            fmt(data['base_suit'], "pts"),
+                        )
+
+                        # Step 2: Climate impact
+                        delta_val = data['delta_suit']
+                        st.metric(
+                            "After climate change (2050)",
+                            fmt(data['fut_suit'], "pts"),
+                            delta=(
+                                f"{delta_val:.1f} pts"
+                                if delta_val is not None else None
+                            ),
+                        )
+
+                        # Step 3: Irrigation recovery — with % recovery
+                        benefit = data['irrig_benefit']
+                        recovery_note = ""
+                        if (
+                            benefit is not None
+                            and delta_val is not None
+                            and delta_val != 0
+                        ):
+                            pct = abs(benefit / delta_val) * 100
+                            recovery_note = f" ({pct:.0f}% of loss)"
+                        st.metric(
+                            "After irrigation adaptation",
+                            fmt(data['irrig_suit'], "pts"),
+                            delta=(
+                                f"+{benefit:.1f} pts recovered{recovery_note}"
+                                if benefit is not None else None
+                            ),
+                        )
+
+                        st.markdown("---")
+                        st.metric(
+                            "Mean water deficit",
+                            fmt(data['water_need'], "mm"),
+                        )
+
+                    # ======================================================
+                    # S2: Magnitude gauges — LCOW vs. global median
+                    # ======================================================
+                    with tab_econ:
+                        st.metric(
+                            "Mean LCOW",
+                            fmt(data['lcow'], "$/m³", decimals=2),
+                        )
+
+                        # S2: Compare against global CSV medians
+                        try:
+                            csv_mod = (
+                                os.path.getmtime(CSV_PATH)
+                                if os.path.exists(CSV_PATH) else None
+                            )
+                            medians = get_global_medians(csv_mod)
+                        except Exception:
+                            medians = {}
+
+                        if (
+                            medians
+                            and data['lcow'] is not None
+                            and medians.get('lcow_median', 0) > 0.01
+                        ):
+                            ratio = data['lcow'] / medians['lcow_median']
+                            if ratio <= 0.75:
+                                st.caption(
+                                    f":green[{ratio:.1f}× global median "
+                                    f"— top-quartile affordability]"
+                                )
+                            elif ratio <= 1.25:
+                                st.caption(
+                                    f":orange[{ratio:.1f}× global median "
+                                    f"— near median cost]"
+                                )
+                            else:
+                                st.caption(
+                                    f":red[{ratio:.1f}× global median "
+                                    f"— elevated extraction cost]"
+                                )
+
+                        st.metric(
+                            "Mean aquifer depth",
+                            fmt(data['gw_depth'], "m"),
+                        )
+
+                        # Format Water Source ratio if available
+                        if data['water_source'] is not None:
+                            gw_pct = data['water_source'] * 100
+                            st.metric(
+                                "Dominant source",
+                                f"{gw_pct:.0f}% Ground / "
+                                f"{100-gw_pct:.0f}% Surface",
+                            )
+                        else:
+                            st.metric("Dominant source", "N/A")
+
+                        # Format Water Stress index
+                        if data['water_stress'] is not None:
+                            stress_idx = int(round(data['water_stress']))
+                            stress_idx = max(1, min(5, stress_idx))
+                            st.metric(
+                                "WRI water stress",
+                                water_stress_labels[stress_idx - 1],
+                            )
+                        else:
+                            st.metric("WRI water stress", "N/A")
+
+                    # C3: Data quality caveat
+                    st.caption(
+                        ":material/info: Statistics represent spatial means "
+                        "across viable Arabica pixels within national borders, "
+                        "not national agricultural averages."
                     )
-                    st.metric("Irrigated Suitability", fmt(data['irrig_suit'], "pts"))
-                    st.metric("Mean Water Deficit", fmt(data['water_need'], "mm"))
-                    st.metric("Irrigation Recovery", fmt(data['irrig_benefit'], "pts"))
-
-                with tab_econ:
-                    st.metric("Mean LCOW", fmt(data['lcow'], "$/m³", decimals=2))
-                    st.metric("Mean Aquifer Depth", fmt(data['gw_depth'], "m"))
-
-                    # Format Water Source ratio if available
-                    if data['water_source'] is not None:
-                        gw_pct = data['water_source'] * 100
-                        st.metric("Dominant Source", f"{gw_pct:.0f}% Ground / {100-gw_pct:.0f}% Surface")
-                    else:
-                        st.metric("Dominant Source", "N/A")
-
-                    # Format Water Stress index
-                    if data['water_stress'] is not None:
-                        stress_idx = int(round(data['water_stress']))
-                        stress_idx = max(1, min(5, stress_idx))
-                        st.metric("WRI Water Stress", water_stress_labels[stress_idx - 1])
-                    else:
-                        st.metric("WRI Water Stress", "N/A")
-            else:
-                st.warning("Clicked point is outside recognized boundaries.")
-    else:
-        st.caption("Click any country on the map to trigger spatial zonal statistics.")
+                else:
+                    st.warning(
+                        "Clicked point is outside recognized boundaries."
+                    )
+        else:
+            st.caption(
+                "Click any country on the map to trigger spatial "
+                "zonal statistics."
+            )
 
 # ==============================================================================
 # 9. STRATEGIC DECISION MATRIX (CARS / BLADE PORTFOLIO VIEW)
@@ -467,9 +618,14 @@ with col_legend:
 # ==============================================================================
 if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
     st.markdown("---")
-    st.subheader("Global Portfolio Competitiveness & Investment Risk")
+    # S1: Full-sentence "so what" anchor title
+    st.subheader(
+        "The adaptation premium reveals sharp regional divergence "
+        "in irrigation economics"
+    )
     st.markdown(
-        "Synthesizing biophysical irrigation needs with localized infrastructure Levelized Cost of Water (LCOW) "
-        "calculated dynamically for viable coffee adaptation zones (Thesis Figure 7)."
+        "Synthesizing biophysical irrigation needs with localized "
+        "infrastructure levelized cost of water (LCOW) calculated "
+        "dynamically for viable coffee adaptation zones."
     )
     render_dynamic_comparative_advantage_matrix()
