@@ -19,7 +19,20 @@ st.set_page_config(
     page_icon=":material/eco:",
     layout="wide"
 )
-
+st.markdown(
+    """
+    <style>
+    /* Prevent metric values from clipping with ellipsis in narrow sidebars */
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.65rem !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        line-height: 1.25 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 st.title("The Adaptation Premium: Global Coffea Arabica GIS Analysis")
 st.markdown(
     "Interactive techno-economic spatial analysis under baseline and "
@@ -106,7 +119,7 @@ def load_precomputed_assets():
     lcow_map = ee.Image(f"{project_path}/Coffee_Optimal_LCOW_Map").selfMask()
     water_source_map = ee.Image(f"{project_path}/Coffee_Water_Source_Map").selfMask()
     gw_depth_map = ee.Image(f"{project_path}/Coffee_Groundwater_Depth_Map").selfMask()
-    water_stress_map = ee.Image(f"{project_path}/Coffee_WRI_Water_Stress_Map").selfMask()
+    water_stress_map = ee.Image(f"{project_path}/Coffee_WRI_Water_Stress_Map")
 
     return {
         # Overall Suitability Scores
@@ -147,9 +160,13 @@ vis_limiting = {
 
 # Economic & Hydrological Vis Params
 vis_lcow = {'min': 0.1, 'max': 2.0, 'palette': ['#2b83ba', '#abdda4', '#ffffbf', '#fdae61', '#d7191c']}
-vis_water_source = {'min': 0, 'max': 1, 'palette': ['#a6cee3', '#1f78b4']}  # 0: Surface, 1: Groundwater
+vis_water_source = {
+    'min': 1,
+    'max': 2,
+    'palette': ['#1f78b4', '#a6cee3']  # 1: Groundwater (dark blue), 2: Surface water (light blue)
+}
 vis_gw_depth = {'min': 3, 'max': 150, 'palette': ['#e0f3f8', '#abd9e9', '#74add1', '#4575b4', '#313695']}
-vis_water_stress = {'min': 1, 'max': 5, 'palette': ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']}
+vis_water_stress = {'min': 0, 'max': 4, 'palette': ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']}
 
 # A3 (CARS): Descriptive labels without numbered prefixes (sentence case)
 limiting_labels = [
@@ -532,76 +549,76 @@ with col_legend:
                     # S2: Magnitude gauges — LCOW vs. global median
                     # ======================================================
                     with tab_econ:
-                        st.metric(
-                            "Mean LCOW",
-                            fmt(data['lcow'], "$/m³", decimals=2),
-                        )
+                        st.metric("Mean LCOW", fmt(data['lcow'], "$/m³", decimals=2))
+                        st.metric("Mean Aquifer Depth", fmt(data['gw_depth'], "m"))
 
-                        # S2: Compare against global CSV medians
-                        try:
-                            csv_mod = (
-                                os.path.getmtime(CSV_PATH)
-                                if os.path.exists(CSV_PATH) else None
-                            )
-                            medians = get_global_medians(csv_mod)
-                        except Exception:
-                            medians = {}
-
-                        if (
-                            medians
-                            and data['lcow'] is not None
-                            and medians.get('lcow_median', 0) > 0.01
-                        ):
-                            ratio = data['lcow'] / medians['lcow_median']
-                            if ratio <= 0.75:
-                                st.caption(
-                                    f":green[{ratio:.1f}× global median "
-                                    f"— top-quartile affordability]"
-                                )
-                            elif ratio <= 1.25:
-                                st.caption(
-                                    f":orange[{ratio:.1f}× global median "
-                                    f"— near median cost]"
-                                )
-                            else:
-                                st.caption(
-                                    f":red[{ratio:.1f}× global median "
-                                    f"— elevated extraction cost]"
-                                )
-
-                        st.metric(
-                            "Mean aquifer depth",
-                            fmt(data['gw_depth'], "m"),
-                        )
-
-                        # Format Water Source ratio if available
+                        # 1. Format Dominant Water Source (clamped to 0-100% to avoid reducer edge artifacts)
                         if data['water_source'] is not None:
-                            gw_pct = data['water_source'] * 100
+                            # Mean of 1.0 = 100% Groundwater, Mean of 2.0 = 100% Surface Water
+                            mean_val = data['water_source']
+                            gw_pct = max(0.0, min(100.0, (2.0 - mean_val) * 100.0))
+                            sw_pct = 100.0 - gw_pct
+                            primary_type = "Groundwater" if gw_pct >= 50.0 else "Surface Water"
                             st.metric(
                                 "Dominant source",
-                                f"{gw_pct:.0f}% Ground / "
-                                f"{100-gw_pct:.0f}% Surface",
+                                primary_type,
+                                delta=f"{gw_pct:.0f}% Ground · {sw_pct:.0f}% Surface",
+                                delta_color="off"
                             )
                         else:
                             st.metric("Dominant source", "N/A")
 
-                        # Format Water Stress index
+                        # 2. Color-Coded WRI Water Stress matching the legend palette
+                        st.markdown("<div style='font-size: 14px; opacity: 0.8; margin-top: 14px; margin-bottom: 4px;'>WRI water stress</div>", unsafe_allow_html=True)
+
                         if data['water_stress'] is not None:
-                            stress_idx = int(round(data['water_stress']))
-                            stress_idx = max(1, min(5, stress_idx))
-                            st.metric(
-                                "WRI water stress",
-                                water_stress_labels[stress_idx - 1],
+                            # Constrain category index to 0..4
+                            raw_idx = int(round(data['water_stress']))
+                            stress_idx = max(0, min(4, raw_idx))
+                            # Match exact palette & labels from your legend definitions (0-indexed)
+                            badge_color = water_stress_colors[stress_idx]
+                            full_label = water_stress_labels[stress_idx]
+                            # Ensure legible contrast (dark text on light green/yellow, white on dark)
+                            text_color = "#111111" if stress_idx in [1, 2] else "#ffffff"
+                            st.markdown(
+                                f"""
+                                <div style="
+                                    display: inline-flex;
+                                    align-items: center;
+                                    gap: 8px;
+                                    background-color: {badge_color};
+                                    color: {text_color};
+                                    padding: 6px 12px;
+                                    border-radius: 6px;
+                                    font-weight: 700;
+                                    font-size: 15px;
+                                    line-height: 1.3;
+                                    word-break: break-word;
+                                    max-width: 100%;
+                                    border: 1px solid rgba(0,0,0,0.25);
+                                ">
+                                    <span style="
+                                        width: 9px;
+                                        height: 9px;
+                                        border-radius: 50%;
+                                        background-color: {text_color};
+                                        display: inline-block;
+                                        flex-shrink: 0;
+                                    "></span>
+                                    <span>{full_label}</span>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
                             )
                         else:
-                            st.metric("WRI water stress", "N/A")
+                            st.markdown("<span style='font-size: 18px; font-weight: 600;'>N/A</span>", unsafe_allow_html=True)
 
-                    # C3: Data quality caveat
-                    st.caption(
-                        ":material/info: Statistics represent spatial means "
-                        "across viable Arabica pixels within national borders, "
-                        "not national agricultural averages."
-                    )
+                        # C3: Data quality caveat
+                        st.caption(
+                            ":material/info: Statistics represent spatial means "
+                            "across viable Arabica pixels within national borders, "
+                            "not national agricultural averages."
+                        )
                 else:
                     st.warning(
                         "Clicked point is outside recognized boundaries."

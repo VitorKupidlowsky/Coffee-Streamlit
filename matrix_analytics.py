@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import statistics
 
 CSV_FILENAME = "coffee_adaptation_matrix.csv"
 CSV_PATH = os.path.join(os.path.dirname(__file__), CSV_FILENAME)
@@ -331,15 +332,16 @@ def render_dynamic_comparative_advantage_matrix():
         bgcolor="rgba(24,25,28,0.82)", borderpad=3,
     )
 
-    # D2: Economic feasibility ceiling at $1.00/m³
-    if x_max > 1.0:
+    # D2: Incumbent (top 10) median LCOW reference line
+    median_lcow = statistics.median(df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)]['avg_lcow'])
+    if median_lcow is not None:
         fig.add_vline(
-            x=1.0, line_width=1.5, line_dash="dot", line_color="#ef4444"
+            x=median_lcow, line_width=1.5, line_dash="dot", line_color="#ef4444"
         )
         fig.add_annotation(
             x=1.0, y=0.96, yref="paper",
             xanchor="left", yanchor="top",
-            text="  Economic feasibility<br>  ceiling ($1.00/m³)",
+            text=f"Incumbent median LCOW<br>${median_lcow:.0f}/m³",
             showarrow=False,
             font=dict(size=9, color="#ef4444"),
             bgcolor="rgba(24,25,28,0.82)", borderpad=3,
