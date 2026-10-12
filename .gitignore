@@ -1,1 +1,21 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
 .venv/
+venv/
+ENV/
+env/
+
+# macOS system files
+.DS_Store
+**/.DS_Store
+
+# Streamlit secrets / local runtime
+.streamlit/secrets.toml
+
+# IDE configuration
+.idea/
+*.swp
