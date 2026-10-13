@@ -10,6 +10,7 @@ from matrix_analytics import (
     render_incumbent_badge,
     DEFAULT_COUNTRIES,
     get_global_medians,
+    load_matrix_csv,
     CSV_PATH,
 )
 
@@ -317,6 +318,20 @@ elif "WRI Projected Water Stress" in active_layer:
 # ==============================================================================
 # 7. COUNTRY ZONAL ANALYTICS ENGINE
 # ==============================================================================
+# LSIB country name mappings to coffee_adaptation_matrix.csv country names
+LSIB_TO_CSV_COUNTRY = {
+    'Bahamas, The': 'Bahamas',
+    'Central African Rep': 'Central African Rep.',
+    'Rep of the Congo': 'Congo',
+    'Cote d\'Ivoire': 'Côte d\'Ivoire',
+    'Dem Rep of the Congo': 'Dem. Rep. Congo',
+    'Dominican Republic': 'Dominican Rep.',
+    'Laos': 'Lao PDR',
+    'Burma': 'Myanmar',
+    'Trinidad & Tobago': 'Trinidad and Tobago',
+}
+
+
 @st.cache_data(show_spinner=False)
 def compute_country_stats(lat, lon):
     """
@@ -362,15 +377,31 @@ def compute_country_stats(lat, lon):
             bestEffort=True
         ).getInfo()
 
+        # Harmonize LCOW with the authoritative thesis adaptation matrix CSV.
+        # Live 10km GEE reduction suffers from boundary grid resampling variances.
+        # Looking up the country in coffee_adaptation_matrix.csv guarantees 100%
+        # parity between Country Zonal Analytics and the Comparative Advantage Matrix.
+        csv_country = LSIB_TO_CSV_COUNTRY.get(country_name, country_name)
+        lcow_val = stats.get('lcow')
+        display_country = country_name
+
+        if os.path.exists(CSV_PATH):
+            mdf = load_matrix_csv(os.path.getmtime(CSV_PATH))
+            if mdf is not None:
+                match = mdf[mdf['country'] == csv_country]
+                if not match.empty:
+                    lcow_val = float(match.iloc[0]['avg_lcow'])
+                    display_country = str(match.iloc[0]['country'])
+
         return {
-            'country': country_name,
+            'country': display_country,
             'base_suit': stats.get('base_suit'),
             'fut_suit': stats.get('fut_suit'),
             'irrig_suit': stats.get('irrig_suit'),
             'delta_suit': stats.get('delta_suit'),
             'irrig_benefit': stats.get('irrig_benefit'),
             'water_need': stats.get('water_need'),
-            'lcow': stats.get('lcow'),
+            'lcow': lcow_val,
             'gw_depth': stats.get('gw_depth'),
             'water_source': stats.get('water_source'),
             'water_stress': stats.get('water_stress')
@@ -394,7 +425,7 @@ def get_incumbent_zonal_medians():
         'delta_suit': -11.4755,
         'irrig_benefit': 0.4965,
         'water_need': 7.5820,
-        'lcow': 0.9700,
+        'lcow': 0.9696,
         'gw_depth': 33.4160,
         'water_source': 1.1365,
         'water_stress': 1.7710,
@@ -661,17 +692,24 @@ with col_legend:
                             "(:green[green = better than incumbent], :red[red = worse than incumbent])"
                         )
 
-                        # 1. Mean LCOW vs. Incumbents' LCOW Median (lower is better)
-                        st.metric("Mean LCOW", fmt(data['lcow'], "$/m³", decimals=2))
+                        # 1. Avg LCOW vs. Incumbents' LCOW Median (lower is better)
+                        st.metric(
+                            "Avg LCOW",
+                            f"${data['lcow']:.2f}/m³" if data['lcow'] is not None else "N/A",
+                        )
                         if data['lcow'] is not None:
                             inc_lcow_zonal = inc_zonal['lcow']
                             diff_lcow = data['lcow'] - inc_lcow_zonal
+                            lcow_diff_str = (
+                                f"{'+' if diff_lcow > 0 else ('-' if diff_lcow < 0 else '')}"
+                                f"${abs(diff_lcow):.2f}/m³"
+                            )
                             render_incumbent_badge(
                                 val=data['lcow'],
                                 inc_val=inc_lcow_zonal,
-                                inc_str=f"{inc_lcow_zonal:.2f} $/m³",
-                                diff_str=f"{diff_lcow:+.2f} $/m³",
-                                label="Incumbent LCOW med",
+                                inc_str=f"${inc_lcow_zonal:.2f}/m³",
+                                diff_str=lcow_diff_str,
+                                label="Incumbent med",
                                 higher_is_better=False,
                             )
 
