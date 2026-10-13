@@ -320,6 +320,10 @@ def compute_country_stats(lat, lon):
         country_geom = selected_country.geometry()
 
         assets = load_precomputed_assets()
+        # Filter out unphysical sentinel dummy values (>= 9999 $/m³ penalty values burned into
+        # unviable pixels with no aquifer and no surface river) so they do not corrupt the national mean
+        lcow_clean = assets['lcow'].updateMask(assets['lcow'].lte(50.0))
+
         stats_stack = ee.Image([
             assets['nat_suit_base'].rename('base_suit'),
             assets['nat_suit_fut'].rename('fut_suit'),
@@ -327,7 +331,7 @@ def compute_country_stats(lat, lon):
             assets['delta_nat_suit'].rename('delta_suit'),
             assets['delta_irrigation_benefit'].unmask(0).rename('irrig_benefit'),
             assets['local_irrigation_budget'].unmask(0).rename('water_need'),
-            assets['lcow'].rename('lcow'),
+            lcow_clean.rename('lcow'),
             assets['gw_depth'].rename('gw_depth'),
             assets['water_source'].rename('water_source'),
             assets['water_stress'].rename('water_stress')
@@ -374,7 +378,7 @@ def get_incumbent_zonal_medians():
         'delta_suit': -11.4755,
         'irrig_benefit': 0.4965,
         'water_need': 7.5820,
-        'lcow': 2.9820,
+        'lcow': 0.9700,
         'gw_depth': 33.4160,
         'water_source': 1.1365,
         'water_stress': 1.7710,
