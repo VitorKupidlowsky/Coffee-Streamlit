@@ -556,14 +556,25 @@ with col_legend:
 
                         # Step 2: Climate impact (2050) vs. Incumbents' 2050 Median (higher is better)
                         delta_val = data['delta_suit']
+                        survivor_diff = (
+                            (data['fut_suit'] - data['base_suit'])
+                            if (data['fut_suit'] is not None and data['base_suit'] is not None)
+                            else None
+                        )
                         st.metric(
                             "After climate change (2050)",
                             fmt(data['fut_suit'], "pts"),
                             delta=(
-                                f"{delta_val:.1f} pts"
-                                if delta_val is not None else None
+                                f"{survivor_diff:+.1f} pts"
+                                if survivor_diff is not None else None
                             ),
                         )
+                        if delta_val is not None:
+                            st.caption(
+                                f":material/public: **Net landscape shift:** `{delta_val:+.1f} pts` "
+                                f"(accounts for acreage completely lost to $0$, whereas metric above tracks surviving acreage only)"
+                            )
+
                         if data['fut_suit'] is not None:
                             inc_fut = inc_zonal['fut_suit']
                             diff_fut = data['fut_suit'] - inc_fut
@@ -585,7 +596,7 @@ with col_legend:
                             and delta_val != 0
                         ):
                             pct = abs(benefit / delta_val) * 100
-                            recovery_note = f" ({pct:.0f}% of loss)"
+                            recovery_note = f" ({pct:.0f}% of landscape loss)"
                         st.metric(
                             "After irrigation adaptation",
                             fmt(data['irrig_suit'], "pts"),
