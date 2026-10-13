@@ -1,6 +1,8 @@
 import os
+import math
 import ee
 import folium
+import pandas as pd
 # TODO(agent-task: LEAN-01): Remove unused imports ('Element', 'DEFAULT_COUNTRIES', 'get_global_medians')
 from branca.element import Element
 import streamlit as st
@@ -593,10 +595,19 @@ with col_legend:
                             st.session_state.pop("selected_coords", None)
                             st.rerun()
 
+                    def is_valid_num(val):
+                        if val is None:
+                            return False
+                        try:
+                            f = float(val)
+                            return not math.isnan(f)
+                        except (ValueError, TypeError):
+                            return False
+
                     def fmt(val, unit="", decimals=1):
                         return (
-                            f"{val:.{decimals}f} {unit}"
-                            if val is not None else "N/A"
+                            f"{float(val):.{decimals}f} {unit}"
+                            if is_valid_num(val) else "N/A"
                         )
 
                     inc_zonal = get_incumbent_zonal_medians()
@@ -734,20 +745,21 @@ with col_legend:
                         )
 
                         # 1. Avg LCOW vs. Incumbents' LCOW Median (lower is better)
-                        has_lcow = data['lcow'] is not None and pd.notna(data['lcow'])
+                        has_lcow = is_valid_num(data.get('lcow'))
                         st.metric(
                             "Avg LCOW",
-                            f"${data['lcow']:.2f}/m³" if has_lcow else "N/A",
+                            f"${float(data['lcow']):.2f}/m³" if has_lcow else "N/A",
                         )
                         if has_lcow:
+                            lcow_val = float(data['lcow'])
                             inc_lcow_zonal = inc_zonal['lcow']
-                            diff_lcow = data['lcow'] - inc_lcow_zonal
+                            diff_lcow = lcow_val - inc_lcow_zonal
                             lcow_diff_str = (
                                 f"{'+' if diff_lcow > 0 else ('-' if diff_lcow < 0 else '')}"
                                 f"${abs(diff_lcow):.2f}/m³"
                             )
                             render_incumbent_badge(
-                                val=data['lcow'],
+                                val=lcow_val,
                                 inc_val=inc_lcow_zonal,
                                 inc_str=f"${inc_lcow_zonal:.2f}/m³",
                                 diff_str=lcow_diff_str,
@@ -756,12 +768,13 @@ with col_legend:
                             )
 
                         # 2. Mean Aquifer Depth vs. Incumbents' Aquifer Depth Median (lower/shallower is better)
-                        st.metric("Mean Aquifer Depth", fmt(data['gw_depth'], "m"))
-                        if data['gw_depth'] is not None:
+                        st.metric("Mean Aquifer Depth", fmt(data.get('gw_depth'), "m"))
+                        if is_valid_num(data.get('gw_depth')):
+                            gw_depth_val = float(data['gw_depth'])
                             inc_depth = inc_zonal['gw_depth']
-                            diff_depth = data['gw_depth'] - inc_depth
+                            diff_depth = gw_depth_val - inc_depth
                             render_incumbent_badge(
-                                val=data['gw_depth'],
+                                val=gw_depth_val,
                                 inc_val=inc_depth,
                                 inc_str=f"{inc_depth:.1f} m",
                                 diff_str=f"{diff_depth:+.1f} m",
@@ -770,7 +783,7 @@ with col_legend:
                             )
 
                         # 3. Dominant Water Source vs. Incumbents' Groundwater Share Median (neutral gray badge)
-                        has_water_source = data['water_source'] is not None and pd.notna(data['water_source'])
+                        has_water_source = is_valid_num(data.get('water_source'))
                         if has_water_source:
                             # Mean of 1.0 = 100% Groundwater, Mean of 2.0 = 100% Surface Water
                             mean_val = float(data['water_source'])
@@ -800,7 +813,7 @@ with col_legend:
                         # 4. Color-Coded WRI Water Stress + Incumbent comparison (lower is better)
                         st.markdown("<div style='font-size: 14px; opacity: 0.8; margin-top: 14px; margin-bottom: 4px;'>WRI water stress</div>", unsafe_allow_html=True)
 
-                        has_water_stress = data['water_stress'] is not None and pd.notna(data['water_stress'])
+                        has_water_stress = is_valid_num(data.get('water_stress'))
                         if has_water_stress:
                             # Constrain category index to 0..4
                             raw_idx = int(round(float(data['water_stress'])))
