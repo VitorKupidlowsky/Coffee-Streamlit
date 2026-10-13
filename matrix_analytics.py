@@ -109,6 +109,22 @@ def _format_exposure(value):
         return f"${value:,.0f}"
 
 
+def _format_signed_exposure(diff):
+    """Format a signed dollar difference into a human-readable string."""
+    if pd.isna(diff):
+        return "N/A"
+    sign = "+" if diff > 0 else ("-" if diff < 0 else "")
+    abs_val = abs(diff)
+    if abs_val >= 1e12:
+        return f"{sign}${abs_val / 1e12:.1f}T"
+    elif abs_val >= 1e9:
+        return f"{sign}${abs_val / 1e9:.1f}B"
+    elif abs_val >= 1e6:
+        return f"{sign}${abs_val / 1e6:.1f}M"
+    else:
+        return f"{sign}${abs_val:,.0f}"
+
+
 def _format_area(ha_value):
     """Format hectares into Mha or kha."""
     if pd.isna(ha_value) or ha_value == 0:
@@ -119,6 +135,107 @@ def _format_area(ha_value):
         return f"{ha_value / 1e3:.0f}k ha"
     else:
         return f"{ha_value:.0f} ha"
+
+
+def _format_signed_area(diff_ha):
+    """Format a signed hectare difference into Mha or kha."""
+    if pd.isna(diff_ha):
+        return "N/A"
+    sign = "+" if diff_ha > 0 else ("-" if diff_ha < 0 else "")
+    abs_val = abs(diff_ha)
+    if abs_val >= 1e6:
+        return f"{sign}{abs_val / 1e6:.1f}M ha"
+    elif abs_val >= 1e3:
+        return f"{sign}{abs_val / 1e3:.0f}k ha"
+    else:
+        return f"{sign}{abs_val:.0f} ha"
+
+
+def _format_water(m3_value):
+    """Format water volume (m³) into B m³ or M m³."""
+    if pd.isna(m3_value) or m3_value == 0:
+        return "N/A"
+    if abs(m3_value) >= 1e9:
+        return f"{m3_value / 1e9:.1f}B m³"
+    else:
+        return f"{m3_value / 1e6:.0f}M m³"
+
+
+def _format_signed_water(diff_m3):
+    """Format a signed water volume difference into B m³ or M m³."""
+    if pd.isna(diff_m3):
+        return "N/A"
+    sign = "+" if diff_m3 > 0 else ("-" if diff_m3 < 0 else "")
+    abs_val = abs(diff_m3)
+    if abs_val >= 1e9:
+        return f"{sign}{abs_val / 1e9:.1f}B m³"
+    else:
+        return f"{sign}{abs_val / 1e6:.0f}M m³"
+
+
+def render_incumbent_badge(
+    val, inc_val, inc_str, diff_str, label="Incumbent med",
+    higher_is_better=False, is_neutral=False
+):
+    """
+    Renders a color-coded comparison badge right beneath a metric:
+    - If is_neutral=True: gray badge showing the comparison (no green/red).
+    - If higher_is_better=True: green when val > inc_val (better), red when val < inc_val (worse).
+    - If higher_is_better=False: green when val < inc_val (better), red when val > inc_val (worse).
+    - Neutral grey when equal.
+    """
+    if val is None or inc_val is None or pd.isna(val) or pd.isna(inc_val):
+        return
+
+    diff = float(val) - float(inc_val)
+    arrow = "↑" if diff > 0 else ("↓" if diff < 0 else "=")
+
+    if is_neutral:
+        bg_color = "rgba(156, 163, 175, 0.16)"
+        border_color = "rgba(156, 163, 175, 0.35)"
+        text_color = "#d1d5db"
+        comp_text = f"At {label}: {inc_str}" if abs(diff) < 1e-6 else f"{diff_str} · {label}: {inc_str}"
+    elif abs(diff) < 1e-6:
+        bg_color = "rgba(156, 163, 175, 0.16)"
+        border_color = "rgba(156, 163, 175, 0.35)"
+        text_color = "#d1d5db"
+        arrow = "="
+        comp_text = f"At {label}: {inc_str}"
+    else:
+        is_better = (diff > 0) if higher_is_better else (diff < 0)
+        if is_better:
+            bg_color = "rgba(34, 197, 94, 0.16)"
+            border_color = "rgba(34, 197, 94, 0.35)"
+            text_color = "#4ade80"
+        else:
+            bg_color = "rgba(239, 68, 68, 0.16)"
+            border_color = "rgba(239, 68, 68, 0.35)"
+            text_color = "#f87171"
+        comp_text = f"{diff_str} · {label}: {inc_str}"
+
+    st.markdown(
+        f"""
+        <div style="
+            margin-top: -10px;
+            margin-bottom: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background-color: {bg_color};
+            color: {text_color};
+            border: 1px solid {border_color};
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.3;
+        ">
+            <span>{arrow}</span>
+            <span>{comp_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_dynamic_comparative_advantage_matrix():
@@ -210,18 +327,25 @@ def render_dynamic_comparative_advantage_matrix():
     x_mid = float(df['avg_lcow'].median())
     y_mid = float(df['deficit_per_ha'].median())
 
-    # Fit axes and tick spacing to the selected values instead of fixed thesis bounds.
+    # Static benchmarks: top-10 incumbent producer medians
+    incumbent_df = df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)].dropna(
+        subset=['avg_lcow', 'deficit_per_ha']
+    )
+    incumbent_lcow = float(incumbent_df['avg_lcow'].median())
+    incumbent_deficit = float(incumbent_df['deficit_per_ha'].median())
+
+    # Fit axes and tick spacing to the selected values with comfortable headroom
     x_data_max = max(float(df['avg_lcow'].max()), 0.0)
     y_data_max = max(float(df['deficit_per_ha'].max()), 0.0)
     x_max = max(x_data_max * 1.12, 0.1)
-    y_max = max(y_data_max * 1.12, 1.0)
+    y_max = max(y_data_max * 1.18, 1.0)
 
     # ==================================================================
     # Build Plotly Figure
     # ==================================================================
     fig = go.Figure()
 
-    # A2: Subtle quadrant risk shading
+    # A2: Subtle quadrant risk shading (added first so lines render on top)
     quadrant_shapes = [
         # Top-Left: Industrial volume adaptation (blue tint)
         dict(
@@ -248,6 +372,8 @@ def render_dynamic_comparative_advantage_matrix():
             line=dict(width=0), layer="below",
         ),
     ]
+    for q_shape in quadrant_shapes:
+        fig.add_shape(q_shape)
 
     # Build scatter traces with spotlight support (A1)
     for _, row in df.iterrows():
@@ -307,45 +433,65 @@ def render_dynamic_comparative_advantage_matrix():
             showlegend=True,
         ))
 
-    # D1: Median reference lines with anchored value labels
+    # ==================================================================
+    # D1 & D2: Reference Lines (4 Distinct Lines)
+    # ==================================================================
+    # 1. Selection Median LCOW (Vertical, Grey dashed)
     fig.add_vline(
-        x=x_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98"
+        x=x_mid, line_width=1.3, line_dash="dash", line_color="#8a8f98"
     )
+    # 2. Selection Median Deficit (Horizontal, Grey dashed)
     fig.add_hline(
-        y=y_mid, line_width=1.2, line_dash="dash", line_color="#8a8f98"
+        y=y_mid, line_width=1.3, line_dash="dash", line_color="#8a8f98"
+    )
+    # 3. Incumbent Benchmark Median LCOW (Vertical, Red dotted)
+    fig.add_vline(
+        x=incumbent_lcow, line_width=1.6, line_dash="dot", line_color="#ef4444"
+    )
+    # 4. Incumbent Benchmark Median Deficit (Horizontal, Red dotted)
+    fig.add_hline(
+        y=incumbent_deficit, line_width=1.6, line_dash="dot", line_color="#ef4444"
     )
 
+    # ==================================================================
+    # Reference Line Annotations (4 Conflict-Free Anchored Badges)
+    # ==================================================================
+    # Label 1: Selection LCOW -> Top of vertical line
     fig.add_annotation(
-        x=x_mid, y=1.02, yref="paper",
+        x=x_mid, y=0.92, yref="paper",
+        xanchor="center", yanchor="top",
+        text=f"Selection median LCOW: ${x_mid:.2f}/m³",
+        showarrow=False,
+        font=dict(size=9, color="#8a8f98"),
+        bgcolor="rgba(24,25,28,0.85)", bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
+    )
+    # Label 2: Incumbent LCOW -> Bottom of vertical line
+    fig.add_annotation(
+        x=incumbent_lcow, y=0.08, yref="paper",
         xanchor="center", yanchor="bottom",
-        text=f"Median LCOW: ${x_mid:.2f}/m³",
+        text=f"Incumbent median LCOW: ${incumbent_lcow:.2f}/m³",
         showarrow=False,
-        font=dict(size=9, color="#8a8f98"),
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+        font=dict(size=9, color="#ef4444"),
+        bgcolor="rgba(24,25,28,0.85)", bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
     )
+    # Label 3: Selection Deficit -> Right margin of horizontal line
     fig.add_annotation(
-        x=1.0, xref="paper", y=y_mid,
-        xanchor="left", yanchor="middle",
-        text=f"  Median deficit: {y_mid:,.0f} m³/ha",
+        x=0.98, xref="paper", y=y_mid,
+        xanchor="right", yanchor="middle",
+        text=f"Selection median deficit: {y_mid:,.0f} m³/ha",
         showarrow=False,
         font=dict(size=9, color="#8a8f98"),
-        bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+        bgcolor="rgba(24,25,28,0.85)", bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
     )
-
-    # D2: Incumbent (top 10) median LCOW reference line
-    median_lcow = statistics.median(df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)]['avg_lcow'])
-    if median_lcow is not None:
-        fig.add_vline(
-            x=median_lcow, line_width=1.5, line_dash="dot", line_color="#ef4444"
-        )
-        fig.add_annotation(
-            x=1.0, y=0.96, yref="paper",
-            xanchor="left", yanchor="top",
-            text=f"Incumbent median LCOW<br>${median_lcow:.0f}/m³",
-            showarrow=False,
-            font=dict(size=9, color="#ef4444"),
-            bgcolor="rgba(24,25,28,0.82)", borderpad=3,
-        )
+    # Label 4: Incumbent Deficit -> Left margin of horizontal line
+    fig.add_annotation(
+        x=0.02, xref="paper", y=incumbent_deficit,
+        xanchor="left", yanchor="middle",
+        text=f"Incumbent median deficit: {incumbent_deficit:,.0f} m³/ha",
+        showarrow=False,
+        font=dict(size=9, color="#ef4444"),
+        bgcolor="rgba(24,25,28,0.85)", bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
+    )
 
     # R1/R2: Strategic archetype quadrant labels (sentence case)
     positions = [
@@ -408,7 +554,6 @@ def render_dynamic_comparative_advantage_matrix():
             gridcolor="#2c2f36",
             zeroline=False,
         ),
-        shapes=quadrant_shapes,
         plot_bgcolor="#18191c",
         paper_bgcolor="#0e1117",
         legend=dict(
@@ -432,6 +577,10 @@ def render_dynamic_comparative_advantage_matrix():
     # ==================================================================
     # E1: Country Explode Drawer — National adaptation exposure details
     # ==================================================================
+    inc_exposure = float(incumbent_df['total_exposure'].median())
+    inc_viable_ha = float(incumbent_df['total_viable_ha'].median())
+    inc_total_m3 = float(incumbent_df['total_m3'].median())
+
     with st.expander(
         ":material/analytics: Drill down — national adaptation exposure "
         "& water supply details"
@@ -440,7 +589,8 @@ def render_dynamic_comparative_advantage_matrix():
         st.caption(
             "**Exposure equation:** Viable area (ha) × Water deficit "
             "(m³/ha) × LCOW (\\$/m³) = **Total national adaptation "
-            "exposure (\\$)**"
+            "exposure (\\$)** · Badges compare each metric against the "
+            "**Top-10 Incumbents' median** (:green[green = below], :red[red = higher])."
         )
 
         sorted_df = df.sort_values('total_exposure', ascending=False)
@@ -457,30 +607,84 @@ def render_dynamic_comparative_advantage_matrix():
                     with st.container(border=True):
                         st.markdown(f"**{row['country']}**")
 
-                        exposure = row.get('total_exposure', 0)
-                        viable_ha = row.get('total_viable_ha', 0)
-                        total_m3 = row.get('total_m3', 0)
+                        exposure = float(row.get('total_exposure', 0))
+                        viable_ha = float(row.get('total_viable_ha', 0))
+                        total_m3 = float(row.get('total_m3', 0))
+                        lcow_val = float(row['avg_lcow'])
+                        deficit_val = float(row['deficit_per_ha'])
 
+                        # 1. National adaptation exposure
                         st.metric(
                             "National adaptation exposure",
                             _format_exposure(exposure),
                         )
+                        render_incumbent_badge(
+                            val=exposure,
+                            inc_val=inc_exposure,
+                            inc_str=_format_exposure(inc_exposure),
+                            diff_str=_format_signed_exposure(exposure - inc_exposure),
+                            label="Incumbent med",
+                            higher_is_better=False,
+                        )
+
+                        # 2. Total viable footprint (higher is better)
                         st.metric(
                             "Total viable footprint",
                             _format_area(viable_ha),
                         )
-                        if total_m3 >= 1e9:
-                            water_label = f"{total_m3 / 1e9:.1f}B m³"
-                        else:
-                            water_label = f"{total_m3 / 1e6:.0f}M m³"
-                        st.metric("Total water volume needed", water_label)
+                        render_incumbent_badge(
+                            val=viable_ha,
+                            inc_val=inc_viable_ha,
+                            inc_str=_format_area(inc_viable_ha),
+                            diff_str=_format_signed_area(viable_ha - inc_viable_ha),
+                            label="Incumbent med",
+                            higher_is_better=True,
+                        )
+
+                        # 3. Total water volume needed
+                        st.metric(
+                            "Total water volume needed",
+                            _format_water(total_m3),
+                        )
+                        render_incumbent_badge(
+                            val=total_m3,
+                            inc_val=inc_total_m3,
+                            inc_str=_format_water(inc_total_m3),
+                            diff_str=_format_signed_water(total_m3 - inc_total_m3),
+                            label="Incumbent med",
+                            higher_is_better=False,
+                        )
+
+                        # 4. Avg LCOW
+                        lcow_diff = lcow_val - incumbent_lcow
+                        lcow_diff_str = f"{'+' if lcow_diff > 0 else ('-' if lcow_diff < 0 else '')}${abs(lcow_diff):.2f}/m³"
                         st.metric(
                             "Avg LCOW",
-                            f"${row['avg_lcow']:.2f}/m³",
+                            f"${lcow_val:.2f}/m³",
                         )
+                        render_incumbent_badge(
+                            val=lcow_val,
+                            inc_val=incumbent_lcow,
+                            inc_str=f"${incumbent_lcow:.2f}/m³",
+                            diff_str=lcow_diff_str,
+                            label="Incumbent med",
+                            higher_is_better=False,
+                        )
+
+                        # 5. Avg deficit
+                        def_diff = deficit_val - incumbent_deficit
+                        def_diff_str = f"{def_diff:+,.0f} m³/ha"
                         st.metric(
                             "Avg deficit",
-                            f"{row['deficit_per_ha']:,.0f} m³/ha",
+                            f"{deficit_val:,.0f} m³/ha",
+                        )
+                        render_incumbent_badge(
+                            val=deficit_val,
+                            inc_val=incumbent_deficit,
+                            inc_str=f"{incumbent_deficit:,.0f} m³/ha",
+                            diff_str=def_diff_str,
+                            label="Incumbent med",
+                            higher_is_better=False,
                         )
 
     # ==================================================================
