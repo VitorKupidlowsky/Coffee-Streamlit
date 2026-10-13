@@ -78,7 +78,6 @@ st.caption(
     "FAO harmonized world soil database"
 )
 
-# TODO(agent-task: BUG-01): Handle Earth Engine auth failure gracefully; prevent uncaught exception crashing page initialization when ADC/credentials are absent
 @st.cache_resource
 def initialize_ee():
     """Initializes Google Earth Engine with project credentials or ADC."""
@@ -88,10 +87,24 @@ def initialize_ee():
             scopes=["https://www.googleapis.com/auth/earthengine"]
         )
         ee.Initialize(credentials=credentials, project=project_id)
-    except Exception:
-        ee.Initialize(project=project_id)
+        return True, None
+    except Exception as e_adc:
+        try:
+            ee.Initialize(project=project_id)
+            return True, None
+        except Exception as e_direct:
+            return False, f"ADC: {e_adc}; Direct: {e_direct}"
 
-initialize_ee()
+
+ee_ok, ee_err = initialize_ee()
+if not ee_ok:
+    st.error(
+        ":material/lock: **Google Earth Engine authentication required.**\n\n"
+        "Please authenticate by running `earthengine authenticate` in your terminal or configure "
+        "Google Application Default Credentials (ADC) for project `thesis-488210`.\n\n"
+        f"*Details:* `{ee_err}`"
+    )
+    st.stop()
 
 if "map_center" not in st.session_state:
     st.session_state.map_center = [0.0, 20.0]
@@ -102,19 +115,21 @@ if "map_zoom" not in st.session_state:
 # ==============================================================================
 # 2. HELPER FUNCTIONS
 # ==============================================================================
-# TODO(agent-task: BUG-02): Wrap ee.Image.getMapId in try/except to gracefully handle GEE tile fetch failures or transient 500 errors
 def add_ee_layer(folium_map, ee_image, vis_params, name, shown=True, opacity=0.85):
     """Fetches Earth Engine map tiles and mounts them as a Folium TileLayer."""
-    map_id_dict = ee.Image(ee_image).getMapId(vis_params)
-    folium.TileLayer(
-        tiles=map_id_dict['tile_fetcher'].url_format,
-        attr="Google Earth Engine",
-        name=name,
-        overlay=True,
-        control=True,
-        show=shown,
-        opacity=opacity
-    ).add_to(folium_map)
+    try:
+        map_id_dict = ee.Image(ee_image).getMapId(vis_params)
+        folium.TileLayer(
+            tiles=map_id_dict['tile_fetcher'].url_format,
+            attr="Google Earth Engine",
+            name=name,
+            overlay=True,
+            control=True,
+            show=shown,
+            opacity=opacity
+        ).add_to(folium_map)
+    except Exception as e:
+        st.warning(f"Could not load Earth Engine layer '{name}': {e}")
 
 # ==============================================================================
 # 3. PRE-COMPUTED ASSET LOADER
@@ -360,14 +375,17 @@ def compute_country_stats(lat, lon):
         # unviable pixels with no aquifer and no surface river) so they do not corrupt the national mean
         lcow_clean = assets['lcow'].updateMask(assets['lcow'].lte(50.0))
 
-        # TODO(agent-task: BUG-03): Review .unmask(0) on 'delta_irrigation_benefit' and 'local_irrigation_budget'. Unmasking across country polygon dilutes zonal mean with non-viable pixels
+        # Mask irrigation layers by viable Arabica footprint to avoid diluting
+        # spatial means with non-coffee pixels (deserts, mountains, urban)
+        viable_mask = assets['nat_suit_base'].gt(0)
+
         stats_stack = ee.Image([
             assets['nat_suit_base'].rename('base_suit'),
             assets['nat_suit_fut'].rename('fut_suit'),
             assets['nat_suit_irrig'].rename('irrig_suit'),
             assets['delta_nat_suit'].rename('delta_suit'),
-            assets['delta_irrigation_benefit'].unmask(0).rename('irrig_benefit'),
-            assets['local_irrigation_budget'].unmask(0).rename('water_need'),
+            assets['delta_irrigation_benefit'].updateMask(viable_mask).rename('irrig_benefit'),
+            assets['local_irrigation_budget'].updateMask(viable_mask).rename('water_need'),
             lcow_clean.rename('lcow'),
             assets['gw_depth'].rename('gw_depth'),
             assets['water_source'].rename('water_source'),
@@ -422,15 +440,15 @@ def get_incumbent_zonal_medians():
     Returns the median zonal statistics across the Top-10 Incumbent coffee-producing
     nations (Brazil, Vietnam, Colombia, Ethiopia, Honduras, Peru, Mexico,
     Guatemala, Nicaragua, Indonesia) computed across the pre-computed GEE stacks
-    at 10 km resolution.
+    at 10 km resolution across viable Arabica pixels.
     """
     return {
         'base_suit': 33.0095,
         'fut_suit': 31.1995,
         'irrig_suit': 30.7900,
         'delta_suit': -11.4755,
-        'irrig_benefit': 0.4965,
-        'water_need': 7.5820,
+        'irrig_benefit': 1.3473,
+        'water_need': 13.3989,
         'lcow': 0.9696,
         'gw_depth': 33.4160,
         'water_source': 1.1365,
@@ -478,7 +496,6 @@ def render_categorical_legend(title, colors, labels):
 col_map, col_legend = st.columns([3.8, 1.4])
 
 with col_map:
-    # TODO(agent-task: BUG-04): Persist clicked country/coords in st.session_state. Dynamic key (key=f"coffee_map_{active_layer}") unmounts component and wipes country statistics whenever layer is switched
     map_output = st_folium(
         m,
         key=f"coffee_map_{active_layer}",
@@ -489,8 +506,11 @@ with col_map:
 
 if map_output and map_output.get("last_clicked"):
     click = map_output["last_clicked"]
-    if click.get("lat") is not None and click.get("lng") is not None:
-        st.session_state.map_center = [click["lat"], click["lng"]]
+    raw_lat = click.get("lat")
+    raw_lon = click.get("lng") if click.get("lng") is not None else click.get("lon")
+    if raw_lat is not None and raw_lon is not None:
+        st.session_state.selected_coords = {"lat": raw_lat, "lon": raw_lon}
+        st.session_state.map_center = [raw_lat, raw_lon]
 
 with col_legend:
     # C2: Visual enclosure — legend section in bordered container
@@ -550,12 +570,11 @@ with col_legend:
     with st.container(border=True):
         st.markdown("**Country zonal analytics**")
 
-        click_data = map_output.get("last_clicked") if map_output else None
+        active_coords = st.session_state.get("selected_coords")
 
-        if click_data:
-            lat = click_data.get("lat")
-            # TODO(agent-task: BUG-05): Handle lon=0.0 edge case safely (prime meridian); use explicit 'is not None' checks rather than truthiness 'or'
-            lon = click_data.get("lng") or click_data.get("lon")
+        if active_coords:
+            lat = active_coords.get("lat")
+            lon = active_coords.get("lon")
 
             if lat is not None and lon is not None:
                 with st.spinner(
@@ -566,7 +585,13 @@ with col_legend:
                 if data and "error" in data:
                     st.error(f"Computation failed: {data['error']}")
                 elif data and data.get('country'):
-                    st.success(f"**{data['country']}**")
+                    col_title, col_clear = st.columns([3.2, 1.2])
+                    with col_title:
+                        st.success(f"**{data['country']}**")
+                    with col_clear:
+                        if st.button("Clear", key="btn_clear_country", help="Clear selected country"):
+                            st.session_state.pop("selected_coords", None)
+                            st.rerun()
 
                     def fmt(val, unit="", decimals=1):
                         return (
@@ -646,21 +671,27 @@ with col_legend:
                         # Step 3: Irrigation recovery vs. Incumbents' Irrigated Median (higher is better)
                         benefit = data['irrig_benefit']
                         recovery_note = ""
-                        # TODO(agent-task: BUG-06): Fix false recovery percentage when delta_suit > 0 (warming increased suitability); only display recovery percentage when delta_suit < 0
+                        # Only compute recovery percentage when there was a net climate suitability deficit (delta_val < 0)
                         if (
                             benefit is not None
                             and delta_val is not None
-                            and delta_val != 0
+                            and delta_val < 0
                         ):
-                            pct = abs(benefit / delta_val) * 100
+                            pct = (benefit / abs(delta_val)) * 100
                             recovery_note = f" ({pct:.0f}%)"
+
+                        if benefit is not None:
+                            if delta_val is not None and delta_val < 0:
+                                delta_text = f"+{benefit:.1f} pts recovered{recovery_note}"
+                            else:
+                                delta_text = f"+{benefit:.1f} pts added"
+                        else:
+                            delta_text = None
+
                         st.metric(
                             "After irrigation adaptation",
                             fmt(data['irrig_suit'], "pts"),
-                            delta=(
-                                f"+{benefit:.1f} pts recovered{recovery_note}"
-                                if benefit is not None else None
-                            ),
+                            delta=delta_text,
                         )
                         if data['irrig_suit'] is not None:
                             inc_irrig = inc_zonal['irrig_suit']
