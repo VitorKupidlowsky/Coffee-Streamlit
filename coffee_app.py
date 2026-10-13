@@ -596,7 +596,7 @@ with col_legend:
                             and delta_val != 0
                         ):
                             pct = abs(benefit / delta_val) * 100
-                            recovery_note = f" ({pct:.0f}% of landscape loss)"
+                            recovery_note = f" ({pct:.0f}%)"
                         st.metric(
                             "After irrigation adaptation",
                             fmt(data['irrig_suit'], "pts"),
