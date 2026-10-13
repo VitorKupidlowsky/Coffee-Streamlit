@@ -32,14 +32,14 @@ st.markdown(
         line-height: 1.25 !important;
     }
 
-    /* Prevent scenario select_slider tick labels from overlapping subsequent widgets */
+    /* Ensure scenario select_slider tick labels sit clearly below the track and do not overlap following widgets */
     [data-testid="stSidebar"] [data-testid="stSlider"] {
-        margin-bottom: 2.25rem !important;
+        margin-bottom: 3.5rem !important;
     }
     [data-testid="stSidebar"] [data-testid="stSliderTickBar"] {
-        position: relative !important;
-        top: auto !important;
-        margin-top: 0.6rem !important;
+        position: absolute !important;
+        top: 100% !important;
+        margin-top: 10px !important;
         font-size: 0.75rem !important;
         line-height: 1.25 !important;
         opacity: 0.9 !important;
