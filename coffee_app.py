@@ -31,6 +31,22 @@ st.markdown(
         word-wrap: break-word !important;
         line-height: 1.25 !important;
     }
+
+    /* Prevent scenario select_slider tick labels from overlapping subsequent widgets */
+    [data-testid="stSidebar"] [data-testid="stSlider"] {
+        margin-bottom: 2.25rem !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stSliderTickBar"] {
+        position: relative !important;
+        top: auto !important;
+        margin-top: 0.6rem !important;
+        font-size: 0.75rem !important;
+        line-height: 1.25 !important;
+        opacity: 0.9 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stSliderTickBar"] > div:last-child {
+        text-align: right !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
