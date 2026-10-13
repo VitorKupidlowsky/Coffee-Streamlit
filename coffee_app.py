@@ -1,6 +1,7 @@
 import os
 import ee
 import folium
+# TODO(agent-task: LEAN-01): Remove unused imports ('Element', 'DEFAULT_COUNTRIES', 'get_global_medians')
 from branca.element import Element
 import streamlit as st
 from streamlit_folium import st_folium
@@ -22,6 +23,7 @@ st.set_page_config(
     page_icon=":material/eco:",
     layout="wide"
 )
+# TODO(agent-task: LEAN-02): Replace brittle DOM test-id CSS injection ([data-testid="stMetricValue"], [data-testid="stSliderTickBar"]) with native Streamlit theme/layout settings
 st.markdown(
     """
     <style>
@@ -76,6 +78,7 @@ st.caption(
     "FAO harmonized world soil database"
 )
 
+# TODO(agent-task: BUG-01): Handle Earth Engine auth failure gracefully; prevent uncaught exception crashing page initialization when ADC/credentials are absent
 @st.cache_resource
 def initialize_ee():
     """Initializes Google Earth Engine with project credentials or ADC."""
@@ -99,6 +102,7 @@ if "map_zoom" not in st.session_state:
 # ==============================================================================
 # 2. HELPER FUNCTIONS
 # ==============================================================================
+# TODO(agent-task: BUG-02): Wrap ee.Image.getMapId in try/except to gracefully handle GEE tile fetch failures or transient 500 errors
 def add_ee_layer(folium_map, ee_image, vis_params, name, shown=True, opacity=0.85):
     """Fetches Earth Engine map tiles and mounts them as a Folium TileLayer."""
     map_id_dict = ee.Image(ee_image).getMapId(vis_params)
@@ -285,6 +289,7 @@ m = folium.Map(
     attr='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 )
 
+# TODO(agent-task: LEAN-03): Replace 12-branch if/elif layer dispatch and 9-branch legend dispatch with a unified declarative LAYER_REGISTRY dictionary
 # Biophysical Layers
 if "Baseline Suitability" in active_layer:
     add_ee_layer(m, layers['nat_suit_base'], vis_suitability, active_layer)
@@ -355,6 +360,7 @@ def compute_country_stats(lat, lon):
         # unviable pixels with no aquifer and no surface river) so they do not corrupt the national mean
         lcow_clean = assets['lcow'].updateMask(assets['lcow'].lte(50.0))
 
+        # TODO(agent-task: BUG-03): Review .unmask(0) on 'delta_irrigation_benefit' and 'local_irrigation_budget'. Unmasking across country polygon dilutes zonal mean with non-viable pixels
         stats_stack = ee.Image([
             assets['nat_suit_base'].rename('base_suit'),
             assets['nat_suit_fut'].rename('fut_suit'),
@@ -472,6 +478,7 @@ def render_categorical_legend(title, colors, labels):
 col_map, col_legend = st.columns([3.8, 1.4])
 
 with col_map:
+    # TODO(agent-task: BUG-04): Persist clicked country/coords in st.session_state. Dynamic key (key=f"coffee_map_{active_layer}") unmounts component and wipes country statistics whenever layer is switched
     map_output = st_folium(
         m,
         key=f"coffee_map_{active_layer}",
@@ -547,6 +554,7 @@ with col_legend:
 
         if click_data:
             lat = click_data.get("lat")
+            # TODO(agent-task: BUG-05): Handle lon=0.0 edge case safely (prime meridian); use explicit 'is not None' checks rather than truthiness 'or'
             lon = click_data.get("lng") or click_data.get("lon")
 
             if lat is not None and lon is not None:
@@ -577,6 +585,7 @@ with col_legend:
                     # B1: Adaptation pathway delta bridge + Incumbent comparison
                     # Shows Baseline → Climate Loss → Recovery as a flow
                     # ======================================================
+                    # TODO(agent-task: LEAN-04): Refactor repetitive metric + difference + render_incumbent_badge boilerplate into a reusable helper function (saves ~120 lines across bio and econ tabs)
                     with tab_bio:
                         st.caption(
                             "**Adaptation pathway** · Badges compare against "
@@ -637,6 +646,7 @@ with col_legend:
                         # Step 3: Irrigation recovery vs. Incumbents' Irrigated Median (higher is better)
                         benefit = data['irrig_benefit']
                         recovery_note = ""
+                        # TODO(agent-task: BUG-06): Fix false recovery percentage when delta_suit > 0 (warming increased suitability); only display recovery percentage when delta_suit < 0
                         if (
                             benefit is not None
                             and delta_val is not None
@@ -693,6 +703,7 @@ with col_legend:
                         )
 
                         # 1. Avg LCOW vs. Incumbents' LCOW Median (lower is better)
+                        # TODO(agent-task: BUG-07): Guard against NaN in data['lcow'] to prevent displaying '$nan/m³' and computing NaN diffs
                         st.metric(
                             "Avg LCOW",
                             f"${data['lcow']:.2f}/m³" if data['lcow'] is not None else "N/A",
@@ -728,6 +739,7 @@ with col_legend:
                             )
 
                         # 3. Dominant Water Source vs. Incumbents' Groundwater Share Median (neutral gray badge)
+                        # TODO(agent-task: BUG-08): Guard against NaN in data['water_source'] which propagates through min/max and results in 'nan%'
                         if data['water_source'] is not None:
                             # Mean of 1.0 = 100% Groundwater, Mean of 2.0 = 100% Surface Water
                             mean_val = data['water_source']
@@ -757,6 +769,7 @@ with col_legend:
                         # 4. Color-Coded WRI Water Stress + Incumbent comparison (lower is better)
                         st.markdown("<div style='font-size: 14px; opacity: 0.8; margin-top: 14px; margin-bottom: 4px;'>WRI water stress</div>", unsafe_allow_html=True)
 
+                        # TODO(agent-task: BUG-09): Prevent ValueError crash on int(round(nan)) when water_stress is NaN
                         if data['water_stress'] is not None:
                             # Constrain category index to 0..4
                             raw_idx = int(round(data['water_stress']))
@@ -847,6 +860,7 @@ if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
 
     # Contextual explanation of the Top-10 Incumbents benchmark before the matrix
     with st.container(border=True):
+        # TODO(agent-task: LEAN-05): Dynamically pull benchmark values (LCOW $0.97/m³, 1,004 m³/ha) from authoritative CSV or constants rather than hardcoding in prose
         st.markdown(
             ":material/workspace_premium: **Understanding the Incumbent Benchmark (Top-10 Producers)**\n\n"
             "**Who are the incumbents?** The *Incumbents* comprise the ten dominant historical coffee-exporting nations — "

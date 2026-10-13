@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+# TODO(agent-task: LEAN-01): Remove unused import 'statistics'
 import statistics
 
 CSV_FILENAME = "coffee_adaptation_matrix.csv"
@@ -64,6 +65,7 @@ def load_matrix_csv(modified_at):
     return df
 
 
+# TODO(agent-task: LEAN-06): Eliminate dead function 'get_global_medians'; it is never invoked anywhere in the codebase
 @st.cache_data
 def get_global_medians(modified_at):
     """
@@ -94,6 +96,7 @@ def get_global_medians(modified_at):
     return result
 
 
+# TODO(agent-task: LEAN-07): Consolidate 6 duplicate magnitude formatting functions (_format_exposure, _format_signed_exposure, _format_area, _format_signed_area, _format_water, _format_signed_water) into one compact utility (saves ~75 lines)
 def _format_exposure(value):
     """Format a dollar exposure value into a human-readable string."""
     if pd.isna(value) or value == 0:
@@ -328,6 +331,7 @@ def render_dynamic_comparative_advantage_matrix():
     y_mid = float(df['deficit_per_ha'].median())
 
     # Static benchmarks: top-10 incumbent producer medians
+    # TODO(agent-task: BUG-10): Guard incumbent median calculation against empty subsets or missing/NaN columns in CSV (e.g. total_exposure, total_m3, avg_lcow)
     incumbent_df = df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)].dropna(
         subset=['avg_lcow', 'deficit_per_ha']
     )
@@ -400,6 +404,7 @@ def render_dynamic_comparative_advantage_matrix():
             text_color = '#6b7280'
             border_color = '#4b5563'
 
+        # TODO(agent-task: BUG-11): Fix Series.get() with default value; if column exists but is NaN, .get() returns NaN instead of default, causing NaN display in hover and cards
         area_display = row.get(
             'area_mha', round(row['total_viable_ha'] / 1e6, 1)
         )
@@ -456,6 +461,7 @@ def render_dynamic_comparative_advantage_matrix():
     # ==================================================================
     # Reference Line Annotations (4 Conflict-Free Anchored Badges)
     # ==================================================================
+    # TODO(agent-task: BUG-12): Prevent label collision between quadrant archetype text and horizontal/vertical reference line annotation badges in edge quadrants
     # Label 1: Selection LCOW -> Top of vertical line
     fig.add_annotation(
         x=x_mid, y=0.92, yref="paper",
@@ -518,6 +524,7 @@ def render_dynamic_comparative_advantage_matrix():
         )
 
     # S1: Full-sentence chart title  &  L2: Axis guidance subtitles
+    # TODO(agent-task: LEAN-08): Make Plotly chart theme-adaptive or transparent (rgba(0,0,0,0)); hardcoded dark background creates visual clash when Streamlit runs in light mode
     fig.update_layout(
         title={
             "text": (
@@ -613,6 +620,7 @@ def render_dynamic_comparative_advantage_matrix():
                         lcow_val = float(row['avg_lcow'])
                         deficit_val = float(row['deficit_per_ha'])
 
+                        # TODO(agent-task: LEAN-09): Streamline expander drill-down cards with data-driven loop across metrics (saves ~70 lines)
                         # 1. National adaptation exposure
                         st.metric(
                             "National adaptation exposure",
