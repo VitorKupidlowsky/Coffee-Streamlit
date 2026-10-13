@@ -734,12 +734,12 @@ with col_legend:
                         )
 
                         # 1. Avg LCOW vs. Incumbents' LCOW Median (lower is better)
-                        # TODO(agent-task: BUG-07): Guard against NaN in data['lcow'] to prevent displaying '$nan/m³' and computing NaN diffs
+                        has_lcow = data['lcow'] is not None and pd.notna(data['lcow'])
                         st.metric(
                             "Avg LCOW",
-                            f"${data['lcow']:.2f}/m³" if data['lcow'] is not None else "N/A",
+                            f"${data['lcow']:.2f}/m³" if has_lcow else "N/A",
                         )
-                        if data['lcow'] is not None:
+                        if has_lcow:
                             inc_lcow_zonal = inc_zonal['lcow']
                             diff_lcow = data['lcow'] - inc_lcow_zonal
                             lcow_diff_str = (
@@ -770,10 +770,10 @@ with col_legend:
                             )
 
                         # 3. Dominant Water Source vs. Incumbents' Groundwater Share Median (neutral gray badge)
-                        # TODO(agent-task: BUG-08): Guard against NaN in data['water_source'] which propagates through min/max and results in 'nan%'
-                        if data['water_source'] is not None:
+                        has_water_source = data['water_source'] is not None and pd.notna(data['water_source'])
+                        if has_water_source:
                             # Mean of 1.0 = 100% Groundwater, Mean of 2.0 = 100% Surface Water
-                            mean_val = data['water_source']
+                            mean_val = float(data['water_source'])
                             gw_pct = max(0.0, min(100.0, (2.0 - mean_val) * 100.0))
                             sw_pct = 100.0 - gw_pct
                             primary_type = "Groundwater" if gw_pct >= 50.0 else "Surface Water"
@@ -800,10 +800,10 @@ with col_legend:
                         # 4. Color-Coded WRI Water Stress + Incumbent comparison (lower is better)
                         st.markdown("<div style='font-size: 14px; opacity: 0.8; margin-top: 14px; margin-bottom: 4px;'>WRI water stress</div>", unsafe_allow_html=True)
 
-                        # TODO(agent-task: BUG-09): Prevent ValueError crash on int(round(nan)) when water_stress is NaN
-                        if data['water_stress'] is not None:
+                        has_water_stress = data['water_stress'] is not None and pd.notna(data['water_stress'])
+                        if has_water_stress:
                             # Constrain category index to 0..4
-                            raw_idx = int(round(data['water_stress']))
+                            raw_idx = int(round(float(data['water_stress'])))
                             stress_idx = max(0, min(4, raw_idx))
                             # Match exact palette & labels from your legend definitions (0-indexed)
                             badge_color = water_stress_colors[stress_idx]
@@ -844,9 +844,9 @@ with col_legend:
                             inc_stress = inc_zonal['water_stress']
                             inc_stress_idx = max(0, min(4, int(round(inc_stress))))
                             inc_stress_label = water_stress_labels[inc_stress_idx]
-                            diff_stress = data['water_stress'] - inc_stress
+                            diff_stress = float(data['water_stress']) - inc_stress
                             render_incumbent_badge(
-                                val=data['water_stress'],
+                                val=float(data['water_stress']),
                                 inc_val=inc_stress,
                                 inc_str=f"{inc_stress:.1f} ({inc_stress_label})",
                                 diff_str=f"{diff_stress:+.1f} idx",
