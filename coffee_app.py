@@ -2,17 +2,13 @@ import os
 import math
 import ee
 import folium
-import pandas as pd
-# TODO(agent-task: LEAN-01): Remove unused imports ('Element', 'DEFAULT_COUNTRIES', 'get_global_medians')
-from branca.element import Element
 import streamlit as st
 from streamlit_folium import st_folium
 import google.auth
 from matrix_analytics import (
     render_dynamic_comparative_advantage_matrix,
     render_incumbent_badge,
-    DEFAULT_COUNTRIES,
-    get_global_medians,
+    get_incumbent_benchmarks,
     load_matrix_csv,
     CSV_PATH,
 )
@@ -24,37 +20,6 @@ st.set_page_config(
     page_title="Coffea arabica Climate Adaptation Engine",
     page_icon=":material/eco:",
     layout="wide"
-)
-# TODO(agent-task: LEAN-02): Replace brittle DOM test-id CSS injection ([data-testid="stMetricValue"], [data-testid="stSliderTickBar"]) with native Streamlit theme/layout settings
-st.markdown(
-    """
-    <style>
-    /* Prevent metric values from clipping with ellipsis in narrow sidebars */
-    [data-testid="stMetricValue"] > div {
-        font-size: 1.65rem !important;
-        white-space: normal !important;
-        word-wrap: break-word !important;
-        line-height: 1.25 !important;
-    }
-
-    /* Ensure scenario select_slider tick labels sit clearly below the track and do not overlap following widgets */
-    [data-testid="stSidebar"] [data-testid="stSlider"] {
-        margin-bottom: 3.5rem !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stSliderTickBar"] {
-        position: absolute !important;
-        top: 100% !important;
-        margin-top: 10px !important;
-        font-size: 0.75rem !important;
-        line-height: 1.25 !important;
-        opacity: 0.9 !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stSliderTickBar"] > div:last-child {
-        text-align: right !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
 )
 st.title("The Adaptation Premium: Global Coffea Arabica GIS Analysis")
 st.markdown(
@@ -225,6 +190,124 @@ water_stress_labels = [
 ]
 water_stress_colors = ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']
 
+LAYER_REGISTRY = {
+    "1. Baseline Suitability Score (0–100)": {
+        "image": layers['nat_suit_base'],
+        "vis": vis_suitability,
+        "legend_type": "gradient",
+        "title": "1. Baseline Suitability Score (0–100)",
+        "palette": vis_suitability['palette'],
+        "min_lbl": "0 (Unsuitable)",
+        "max_lbl": "100 (Optimal)",
+    },
+    "2. Limiting Factor (Baseline)": {
+        "image": layers['baseline_limiting'],
+        "vis": vis_limiting,
+        "legend_type": "categorical",
+        "title": "2. Limiting Factor (Baseline)",
+        "colors": limiting_colors,
+        "labels": limiting_labels,
+    },
+    "1. Future Suitability (2050 SSP5-8.5)": {
+        "image": layers['nat_suit_fut'],
+        "vis": vis_suitability,
+        "legend_type": "gradient",
+        "title": "1. Future Suitability (2050 SSP5-8.5)",
+        "palette": vis_suitability['palette'],
+        "min_lbl": "0 (Unsuitable)",
+        "max_lbl": "100 (Optimal)",
+    },
+    "2. Delta Suitability (Future - Baseline)": {
+        "image": layers['delta_nat_suit'],
+        "vis": vis_delta,
+        "legend_type": "gradient",
+        "title": "2. Delta Suitability (Future - Baseline)",
+        "palette": vis_delta['palette'],
+        "min_lbl": "-100 (Loss)",
+        "max_lbl": "+100 (Gain)",
+        "center_label": "0",
+    },
+    "3. Limiting Factor (Future 2050)": {
+        "image": layers['future_limiting'],
+        "vis": vis_limiting,
+        "legend_type": "categorical",
+        "title": "3. Limiting Factor (Future 2050)",
+        "colors": limiting_colors,
+        "labels": limiting_labels,
+    },
+    "1. Irrigated Suitability (2050)": {
+        "image": layers['nat_suit_irrig'],
+        "vis": vis_suitability,
+        "legend_type": "gradient",
+        "title": "1. Irrigated Suitability (2050)",
+        "palette": vis_suitability['palette'],
+        "min_lbl": "0 (Unsuitable)",
+        "max_lbl": "100 (Optimal)",
+    },
+    "2. Points Recovered via Irrigation": {
+        "image": layers['delta_irrigation_benefit'].selfMask(),
+        "vis": vis_benefit,
+        "legend_type": "gradient",
+        "title": "2. Points Recovered via Irrigation",
+        "palette": vis_benefit['palette'],
+        "min_lbl": "+1 pt",
+        "max_lbl": "+50 pts",
+    },
+    "3. Irrigation Budget Need (mm)": {
+        "image": layers['local_irrigation_budget'].selfMask(),
+        "vis": vis_irrigation,
+        "legend_type": "gradient",
+        "title": "3. Irrigation Budget Need (mm)",
+        "palette": vis_irrigation['palette'],
+        "min_lbl": "1 mm",
+        "max_lbl": "300 mm",
+    },
+    "4. Limiting Factor (Post-Irrigation)": {
+        "image": layers['irrigated_limiting'],
+        "vis": vis_limiting,
+        "legend_type": "categorical",
+        "title": "4. Limiting Factor (Post-Irrigation)",
+        "colors": limiting_colors,
+        "labels": limiting_labels,
+    },
+    "1. Levelized Cost of Water (LCOW, $/m³)": {
+        "image": layers['lcow'],
+        "vis": vis_lcow,
+        "legend_type": "gradient",
+        "title": "Levelized cost of water",
+        "palette": vis_lcow['palette'],
+        "min_lbl": "≤ \\$0.25/m³",
+        "max_lbl": "≥ \\$2.00/m³",
+        "center_label": "\\$0.80/m³",
+    },
+    "2. Water Source Selection (Surface vs. Groundwater)": {
+        "image": layers['water_source'],
+        "vis": vis_water_source,
+        "legend_type": "categorical",
+        "title": "2. Water Source Selection (Surface vs. Groundwater)",
+        "colors": ['#a6cee3', '#1f78b4'],
+        "labels": ['Surface water', 'Groundwater'],
+    },
+    "3. Aquifer Depth to Groundwater (m)": {
+        "image": layers['gw_depth'],
+        "vis": vis_gw_depth,
+        "legend_type": "gradient",
+        "title": "Groundwater aquifer depth",
+        "palette": vis_gw_depth['palette'],
+        "min_lbl": "3 m (Shallow)",
+        "max_lbl": "150 m (Deep)",
+    },
+    "4. WRI Projected Water Stress (2050)": {
+        "image": layers['water_stress'],
+        "vis": vis_water_stress,
+        "legend_type": "categorical",
+        "title": "4. WRI Projected Water Stress (2050)",
+        "colors": water_stress_colors,
+        "labels": water_stress_labels,
+    },
+}
+
+
 # ==============================================================================
 # 5. SIDEBAR SELECTION (CARS/BLADE HIERARCHICAL STRUCTURE)
 # ==============================================================================
@@ -306,36 +389,10 @@ m = folium.Map(
     attr='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 )
 
-# TODO(agent-task: LEAN-03): Replace 12-branch if/elif layer dispatch and 9-branch legend dispatch with a unified declarative LAYER_REGISTRY dictionary
-# Biophysical Layers
-if "Baseline Suitability" in active_layer:
-    add_ee_layer(m, layers['nat_suit_base'], vis_suitability, active_layer)
-elif "Limiting Factor (Baseline)" in active_layer:
-    add_ee_layer(m, layers['baseline_limiting'], vis_limiting, active_layer)
-elif "Future Suitability" in active_layer:
-    add_ee_layer(m, layers['nat_suit_fut'], vis_suitability, active_layer)
-elif "Delta Suitability" in active_layer:
-    add_ee_layer(m, layers['delta_nat_suit'], vis_delta, active_layer)
-elif "Limiting Factor (Future 2050)" in active_layer:
-    add_ee_layer(m, layers['future_limiting'], vis_limiting, active_layer)
-elif "Irrigated Suitability" in active_layer:
-    add_ee_layer(m, layers['nat_suit_irrig'], vis_suitability, active_layer)
-elif "Points Recovered" in active_layer:
-    add_ee_layer(m, layers['delta_irrigation_benefit'].selfMask(), vis_benefit, active_layer)
-elif "Irrigation Budget" in active_layer:
-    add_ee_layer(m, layers['local_irrigation_budget'].selfMask(), vis_irrigation, active_layer)
-elif "Limiting Factor (Post-Irrigation)" in active_layer:
-    add_ee_layer(m, layers['irrigated_limiting'], vis_limiting, active_layer)
+layer_cfg = LAYER_REGISTRY.get(active_layer)
+if layer_cfg:
+    add_ee_layer(m, layer_cfg["image"], layer_cfg["vis"], active_layer)
 
-# Techno-Economic & Hydrological Layers
-elif "LCOW" in active_layer:
-    add_ee_layer(m, layers['lcow'], vis_lcow, active_layer)
-elif "Water Source Selection" in active_layer:
-    add_ee_layer(m, layers['water_source'], vis_water_source, active_layer)
-elif "Aquifer Depth" in active_layer:
-    add_ee_layer(m, layers['gw_depth'], vis_gw_depth, active_layer)
-elif "WRI Projected Water Stress" in active_layer:
-    add_ee_layer(m, layers['water_stress'], vis_water_stress, active_layer)
 
 # ==============================================================================
 # 7. COUNTRY ZONAL ANALYTICS ENGINE
@@ -519,54 +576,22 @@ with col_legend:
     with st.container(border=True):
         st.markdown("**Active layer legend**")
 
-        if "Suitability" in active_layer:
-            render_st_gradient(
-                active_layer, vis_suitability['palette'],
-                "0 (Unsuitable)", "100 (Optimal)"
-            )
-        elif "Delta Suitability" in active_layer:
-            render_st_gradient(
-                active_layer, vis_delta['palette'],
-                "-100 (Loss)", "+100 (Gain)", center_label="0"
-            )
-        elif "Points Recovered" in active_layer:
-            render_st_gradient(
-                active_layer, vis_benefit['palette'],
-                "+1 pt", "+50 pts"
-            )
-        elif "Irrigation Budget" in active_layer:
-            render_st_gradient(
-                active_layer, vis_irrigation['palette'],
-                "1 mm", "300 mm"
-            )
-        elif "Limiting Factor" in active_layer:
-            render_categorical_legend(
-                active_layer, limiting_colors, limiting_labels
-            )
-        elif "LCOW" in active_layer:
-            render_st_gradient(
-                "Levelized cost of water",
-                vis_lcow['palette'],
-                "≤ \\$0.25/m³", "≥ \\$2.00/m³",
-                center_label="\\$0.80/m³"
-            )
-        elif "Water Source Selection" in active_layer:
-            render_categorical_legend(
-                active_layer,
-                ['#a6cee3', '#1f78b4'],
-                ['Surface water', 'Groundwater']
-            )
-        elif "Aquifer Depth" in active_layer:
-            render_st_gradient(
-                "Groundwater aquifer depth",
-                vis_gw_depth['palette'],
-                "3 m (Shallow)", "150 m (Deep)"
-            )
-        elif "WRI Projected Water Stress" in active_layer:
-            render_categorical_legend(
-                active_layer,
-                water_stress_colors, water_stress_labels
-            )
+        if layer_cfg:
+            if layer_cfg["legend_type"] == "gradient":
+                render_st_gradient(
+                    layer_cfg["title"],
+                    layer_cfg["palette"],
+                    layer_cfg["min_lbl"],
+                    layer_cfg["max_lbl"],
+                    center_label=layer_cfg.get("center_label")
+                )
+            elif layer_cfg["legend_type"] == "categorical":
+                render_categorical_legend(
+                    layer_cfg["title"],
+                    layer_cfg["colors"],
+                    layer_cfg["labels"]
+                )
+
 
     # C2: Visual enclosure — zonal analytics section
     with st.container(border=True):
@@ -604,11 +629,50 @@ with col_legend:
                         except (ValueError, TypeError):
                             return False
 
-                    def fmt(val, unit="", decimals=1):
-                        return (
-                            f"{float(val):.{decimals}f} {unit}"
-                            if is_valid_num(val) else "N/A"
-                        )
+                    def render_zonal_metric_with_badge(
+                        label,
+                        val,
+                        inc_val,
+                        unit="",
+                        decimals=1,
+                        higher_is_better=True,
+                        is_neutral=False,
+                        delta_text=None,
+                        badge_label="Incumbent med",
+                        is_currency=False,
+                    ):
+                        if not is_valid_num(val):
+                            st.metric(label, "N/A")
+                            return
+
+                        val_f = float(val)
+                        if is_currency:
+                            val_str = f"${val_f:.{decimals}f}{unit}"
+                        else:
+                            val_str = f"{val_f:.{decimals}f} {unit}".strip()
+
+                        st.metric(label, val_str, delta=delta_text)
+
+                        if inc_val is not None and is_valid_num(inc_val):
+                            inc_f = float(inc_val)
+                            diff = val_f - inc_f
+                            if is_currency:
+                                sign = "+" if diff > 0 else ("-" if diff < 0 else "")
+                                diff_str = f"{sign}${abs(diff):.{decimals}f}{unit}"
+                                inc_str = f"${inc_f:.{decimals}f}{unit}"
+                            else:
+                                diff_str = f"{diff:+.{decimals}f} {unit}".strip()
+                                inc_str = f"{inc_f:.{decimals}f} {unit}".strip()
+
+                            render_incumbent_badge(
+                                val=val_f,
+                                inc_val=inc_f,
+                                inc_str=inc_str,
+                                diff_str=diff_str,
+                                label=badge_label,
+                                higher_is_better=higher_is_better,
+                                is_neutral=is_neutral,
+                            )
 
                     inc_zonal = get_incumbent_zonal_medians()
 
@@ -621,7 +685,6 @@ with col_legend:
                     # B1: Adaptation pathway delta bridge + Incumbent comparison
                     # Shows Baseline → Climate Loss → Recovery as a flow
                     # ======================================================
-                    # TODO(agent-task: LEAN-04): Refactor repetitive metric + difference + render_incumbent_badge boilerplate into a reusable helper function (saves ~120 lines across bio and econ tabs)
                     with tab_bio:
                         st.caption(
                             "**Adaptation pathway** · Badges compare against "
@@ -630,21 +693,15 @@ with col_legend:
                         )
 
                         # Step 1: Baseline suitability vs. Incumbents' Baseline Median (higher is better)
-                        st.metric(
+                        render_zonal_metric_with_badge(
                             "Baseline suitability",
-                            fmt(data['base_suit'], "pts"),
+                            data['base_suit'],
+                            inc_zonal['base_suit'],
+                            unit="pts",
+                            decimals=1,
+                            higher_is_better=True,
+                            badge_label="Incumbent baseline med",
                         )
-                        if data['base_suit'] is not None:
-                            inc_base = inc_zonal['base_suit']
-                            diff_base = data['base_suit'] - inc_base
-                            render_incumbent_badge(
-                                val=data['base_suit'],
-                                inc_val=inc_base,
-                                inc_str=f"{inc_base:.1f} pts",
-                                diff_str=f"{diff_base:+.1f} pts",
-                                label="Incumbent baseline med",
-                                higher_is_better=True,
-                            )
 
                         # Step 2: Climate impact (2050) vs. Incumbents' 2050 Median (higher is better)
                         delta_val = data['delta_suit']
@@ -653,30 +710,24 @@ with col_legend:
                             if (data['fut_suit'] is not None and data['base_suit'] is not None)
                             else None
                         )
-                        st.metric(
+                        delta_text = (
+                            f"{survivor_diff:+.1f} pts"
+                            if survivor_diff is not None else None
+                        )
+                        render_zonal_metric_with_badge(
                             "After climate change (2050)",
-                            fmt(data['fut_suit'], "pts"),
-                            delta=(
-                                f"{survivor_diff:+.1f} pts"
-                                if survivor_diff is not None else None
-                            ),
+                            data['fut_suit'],
+                            inc_zonal['fut_suit'],
+                            unit="pts",
+                            decimals=1,
+                            higher_is_better=True,
+                            delta_text=delta_text,
+                            badge_label="Incumbent 2050 med",
                         )
                         if delta_val is not None:
                             st.caption(
                                 f":material/public: **Net landscape shift:** `{delta_val:+.1f} pts` "
                                 f"(accounts for acreage completely lost to $0$, whereas metric above tracks surviving acreage only)"
-                            )
-
-                        if data['fut_suit'] is not None:
-                            inc_fut = inc_zonal['fut_suit']
-                            diff_fut = data['fut_suit'] - inc_fut
-                            render_incumbent_badge(
-                                val=data['fut_suit'],
-                                inc_val=inc_fut,
-                                inc_str=f"{inc_fut:.1f} pts",
-                                diff_str=f"{diff_fut:+.1f} pts",
-                                label="Incumbent 2050 med",
-                                higher_is_better=True,
                             )
 
                         # Step 3: Irrigation recovery vs. Incumbents' Irrigated Median (higher is better)
@@ -699,40 +750,28 @@ with col_legend:
                         else:
                             delta_text = None
 
-                        st.metric(
+                        render_zonal_metric_with_badge(
                             "After irrigation adaptation",
-                            fmt(data['irrig_suit'], "pts"),
-                            delta=delta_text,
+                            data['irrig_suit'],
+                            inc_zonal['irrig_suit'],
+                            unit="pts",
+                            decimals=1,
+                            higher_is_better=True,
+                            delta_text=delta_text,
+                            badge_label="Incumbent irrigated med",
                         )
-                        if data['irrig_suit'] is not None:
-                            inc_irrig = inc_zonal['irrig_suit']
-                            diff_irrig = data['irrig_suit'] - inc_irrig
-                            render_incumbent_badge(
-                                val=data['irrig_suit'],
-                                inc_val=inc_irrig,
-                                inc_str=f"{inc_irrig:.1f} pts",
-                                diff_str=f"{diff_irrig:+.1f} pts",
-                                label="Incumbent irrigated med",
-                                higher_is_better=True,
-                            )
 
                         st.markdown("---")
                         # Step 4: Mean water deficit vs. Incumbents' Deficit Median (lower is better)
-                        st.metric(
+                        render_zonal_metric_with_badge(
                             "Mean water deficit",
-                            fmt(data['water_need'], "mm"),
+                            data['water_need'],
+                            inc_zonal['water_need'],
+                            unit="mm",
+                            decimals=1,
+                            higher_is_better=False,
+                            badge_label="Incumbent deficit med",
                         )
-                        if data['water_need'] is not None:
-                            inc_need = inc_zonal['water_need']
-                            diff_need = data['water_need'] - inc_need
-                            render_incumbent_badge(
-                                val=data['water_need'],
-                                inc_val=inc_need,
-                                inc_str=f"{inc_need:.1f} mm",
-                                diff_str=f"{diff_need:+.1f} mm",
-                                label="Incumbent deficit med",
-                                higher_is_better=False,
-                            )
 
                     # ======================================================
                     # S2: Techno-economic metrics + Incumbent comparison
@@ -745,42 +784,28 @@ with col_legend:
                         )
 
                         # 1. Avg LCOW vs. Incumbents' LCOW Median (lower is better)
-                        has_lcow = is_valid_num(data.get('lcow'))
-                        st.metric(
+                        render_zonal_metric_with_badge(
                             "Avg LCOW",
-                            f"${float(data['lcow']):.2f}/m³" if has_lcow else "N/A",
+                            data.get('lcow'),
+                            inc_zonal['lcow'],
+                            unit="/m³",
+                            decimals=2,
+                            higher_is_better=False,
+                            is_currency=True,
+                            badge_label="Incumbent med",
                         )
-                        if has_lcow:
-                            lcow_val = float(data['lcow'])
-                            inc_lcow_zonal = inc_zonal['lcow']
-                            diff_lcow = lcow_val - inc_lcow_zonal
-                            lcow_diff_str = (
-                                f"{'+' if diff_lcow > 0 else ('-' if diff_lcow < 0 else '')}"
-                                f"${abs(diff_lcow):.2f}/m³"
-                            )
-                            render_incumbent_badge(
-                                val=lcow_val,
-                                inc_val=inc_lcow_zonal,
-                                inc_str=f"${inc_lcow_zonal:.2f}/m³",
-                                diff_str=lcow_diff_str,
-                                label="Incumbent med",
-                                higher_is_better=False,
-                            )
 
                         # 2. Mean Aquifer Depth vs. Incumbents' Aquifer Depth Median (lower/shallower is better)
-                        st.metric("Mean Aquifer Depth", fmt(data.get('gw_depth'), "m"))
-                        if is_valid_num(data.get('gw_depth')):
-                            gw_depth_val = float(data['gw_depth'])
-                            inc_depth = inc_zonal['gw_depth']
-                            diff_depth = gw_depth_val - inc_depth
-                            render_incumbent_badge(
-                                val=gw_depth_val,
-                                inc_val=inc_depth,
-                                inc_str=f"{inc_depth:.1f} m",
-                                diff_str=f"{diff_depth:+.1f} m",
-                                label="Incumbent depth med",
-                                higher_is_better=False,
-                            )
+                        render_zonal_metric_with_badge(
+                            "Mean Aquifer Depth",
+                            data.get('gw_depth'),
+                            inc_zonal['gw_depth'],
+                            unit="m",
+                            decimals=1,
+                            higher_is_better=False,
+                            badge_label="Incumbent depth med",
+                        )
+
 
                         # 3. Dominant Water Source vs. Incumbents' Groundwater Share Median (neutral gray badge)
                         has_water_source = is_valid_num(data.get('water_source'))
@@ -904,7 +929,10 @@ if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
 
     # Contextual explanation of the Top-10 Incumbents benchmark before the matrix
     with st.container(border=True):
-        # TODO(agent-task: LEAN-05): Dynamically pull benchmark values (LCOW $0.97/m³, 1,004 m³/ha) from authoritative CSV or constants rather than hardcoding in prose
+        benchmarks = get_incumbent_benchmarks()
+        bench_lcow_str = f"${benchmarks['lcow']:.2f}/m³"
+        bench_deficit_str = f"{benchmarks['deficit']:,.0f} m³/ha"
+
         st.markdown(
             ":material/workspace_premium: **Understanding the Incumbent Benchmark (Top-10 Producers)**\n\n"
             "**Who are the incumbents?** The *Incumbents* comprise the ten dominant historical coffee-exporting nations — "
@@ -912,8 +940,8 @@ if scenario_mode == "2050 SSP5-8.5 (Irrigated Adaptation)":
             "Together, these origins account for nearly **85–90% of global coffee supply** and concentrate the industry's "
             "established dry-milling capacity, export logistics, agronomic institutional knowledge, and trade finance networks.\n\n"
             "**Why use the incumbents' median as the comparison benchmark?**\n"
-            "- **Industry Cost & Volume Threshold:** The incumbents' median establishes the empirical competitive baseline "
-            "for unit water cost (**LCOW: \\$0.97/m³**) and volumetric irrigation demand (**1,004 m³/ha**) across active supply chains.\n"
+            f"- **Industry Cost & Volume Threshold:** The incumbents' median establishes the empirical competitive baseline "
+            f"for unit water cost (**LCOW: \\{bench_lcow_str}**) and volumetric irrigation demand (**{bench_deficit_str}**) across active supply chains.\n"
             "- **Supply-Chain Retention vs. Frontier Reallocation:** Incumbent origins operating **below** the incumbent median "
             "(:green[green]) possess a structural cost or hydrological buffer to defend market share through irrigation investment. "
             "Conversely, origins operating **above** the incumbent median (:red[red]) face margin compression — while emerging "

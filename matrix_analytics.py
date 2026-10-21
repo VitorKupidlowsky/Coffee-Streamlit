@@ -3,8 +3,6 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-# TODO(agent-task: LEAN-01): Remove unused import 'statistics'
-import statistics
 
 CSV_FILENAME = "coffee_adaptation_matrix.csv"
 CSV_PATH = os.path.join(os.path.dirname(__file__), CSV_FILENAME)
@@ -65,115 +63,78 @@ def load_matrix_csv(modified_at):
     return df
 
 
-# TODO(agent-task: LEAN-06): Eliminate dead function 'get_global_medians'; it is never invoked anywhere in the codebase
-@st.cache_data
-def get_global_medians(modified_at):
+def get_incumbent_benchmarks():
     """
-    Compute global median and percentile benchmarks from the full CSV dataset.
-    Used by coffee_app.py for S2 magnitude gauge comparisons in the zonal panel.
+    Returns authoritative benchmark values for the Top-10 Incumbent coffee producers
+    from the CSV dataset with robust thesis fallbacks.
+    """
+    mtime = os.path.getmtime(CSV_PATH) if os.path.exists(CSV_PATH) else 0
+    df_raw = load_matrix_csv(mtime)
+    inc_lcow = 0.9696
+    inc_deficit = 1004.0
+    inc_exposure = 3384322371.0
+    inc_viable_ha = 11878955.0
+    inc_total_m3 = 10016459944.0
 
-    Returns a dict with keys: lcow_median, lcow_p25, lcow_p75,
-    deficit_median, deficit_p25, deficit_p75, exposure_median.
-    Returns empty dict if CSV is unavailable.
-    """
-    df = load_matrix_csv(modified_at)
-    if df is None:
-        return {}
-    df = df.replace([float('inf'), float('-inf')], pd.NA)
-    df = df.dropna(subset=['avg_lcow', 'deficit_per_ha'])
-    if df.empty:
-        return {}
-    result = {
-        'lcow_median': float(df['avg_lcow'].median()),
-        'lcow_p25': float(df['avg_lcow'].quantile(0.25)),
-        'lcow_p75': float(df['avg_lcow'].quantile(0.75)),
-        'deficit_median': float(df['deficit_per_ha'].median()),
-        'deficit_p25': float(df['deficit_per_ha'].quantile(0.25)),
-        'deficit_p75': float(df['deficit_per_ha'].quantile(0.75)),
+    if df_raw is not None and not df_raw.empty:
+        incumbent_df = df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)]
+        if not incumbent_df.empty:
+            if 'avg_lcow' in incumbent_df.columns and pd.notna(incumbent_df['avg_lcow'].median()):
+                inc_lcow = float(incumbent_df['avg_lcow'].median())
+            if 'deficit_per_ha' in incumbent_df.columns and pd.notna(incumbent_df['deficit_per_ha'].median()):
+                inc_deficit = float(incumbent_df['deficit_per_ha'].median())
+            if 'total_exposure' in incumbent_df.columns and pd.notna(incumbent_df['total_exposure'].median()):
+                inc_exposure = float(incumbent_df['total_exposure'].median())
+            if 'total_viable_ha' in incumbent_df.columns and pd.notna(incumbent_df['total_viable_ha'].median()):
+                inc_viable_ha = float(incumbent_df['total_viable_ha'].median())
+            if 'total_m3' in incumbent_df.columns and pd.notna(incumbent_df['total_m3'].median()):
+                inc_total_m3 = float(incumbent_df['total_m3'].median())
+
+    return {
+        'lcow': inc_lcow,
+        'deficit': inc_deficit,
+        'exposure': inc_exposure,
+        'viable_ha': inc_viable_ha,
+        'total_m3': inc_total_m3,
     }
-    if 'total_exposure' in df.columns:
-        result['exposure_median'] = float(df['total_exposure'].median())
-    return result
 
 
-# TODO(agent-task: LEAN-07): Consolidate 6 duplicate magnitude formatting functions (_format_exposure, _format_signed_exposure, _format_area, _format_signed_area, _format_water, _format_signed_water) into one compact utility (saves ~75 lines)
-def _format_exposure(value):
-    """Format a dollar exposure value into a human-readable string."""
-    if pd.isna(value) or value == 0:
+
+def format_magnitude(val, unit="", is_currency=False, signed=False, decimals=1):
+    """
+    General-purpose magnitude thresholding formatter (T, B, M, k).
+    Replaces separate exposure, area, and water volume formatters.
+    """
+    if val is None or pd.isna(val) or (val == 0 and not signed):
         return "N/A"
-    abs_val = abs(value)
+    try:
+        f_val = float(val)
+    except (ValueError, TypeError):
+        return "N/A"
+
+    sign = ""
+    if signed:
+        sign = "+" if f_val > 0 else ("-" if f_val < 0 else "")
+    abs_val = abs(f_val)
+
     if abs_val >= 1e12:
-        return f"${value / 1e12:.1f}T"
+        num = f"{abs_val / 1e12:.{decimals}f}T"
     elif abs_val >= 1e9:
-        return f"${value / 1e9:.1f}B"
+        num = f"{abs_val / 1e9:.{decimals}f}B"
     elif abs_val >= 1e6:
-        return f"${value / 1e6:.1f}M"
+        d = 0 if unit == "m³" and decimals == 1 else decimals
+        num = f"{abs_val / 1e6:.{d}f}M"
+    elif abs_val >= 1e3 and unit in ["ha", "m³"]:
+        num = f"{abs_val / 1e3:.0f}k"
+    elif is_currency:
+        num = f"{abs_val:,.0f}"
     else:
-        return f"${value:,.0f}"
+        num = f"{abs_val:.0f}"
 
-
-def _format_signed_exposure(diff):
-    """Format a signed dollar difference into a human-readable string."""
-    if pd.isna(diff):
-        return "N/A"
-    sign = "+" if diff > 0 else ("-" if diff < 0 else "")
-    abs_val = abs(diff)
-    if abs_val >= 1e12:
-        return f"{sign}${abs_val / 1e12:.1f}T"
-    elif abs_val >= 1e9:
-        return f"{sign}${abs_val / 1e9:.1f}B"
-    elif abs_val >= 1e6:
-        return f"{sign}${abs_val / 1e6:.1f}M"
-    else:
-        return f"{sign}${abs_val:,.0f}"
-
-
-def _format_area(ha_value):
-    """Format hectares into Mha or kha."""
-    if pd.isna(ha_value) or ha_value == 0:
-        return "N/A"
-    if ha_value >= 1e6:
-        return f"{ha_value / 1e6:.1f}M ha"
-    elif ha_value >= 1e3:
-        return f"{ha_value / 1e3:.0f}k ha"
-    else:
-        return f"{ha_value:.0f} ha"
-
-
-def _format_signed_area(diff_ha):
-    """Format a signed hectare difference into Mha or kha."""
-    if pd.isna(diff_ha):
-        return "N/A"
-    sign = "+" if diff_ha > 0 else ("-" if diff_ha < 0 else "")
-    abs_val = abs(diff_ha)
-    if abs_val >= 1e6:
-        return f"{sign}{abs_val / 1e6:.1f}M ha"
-    elif abs_val >= 1e3:
-        return f"{sign}{abs_val / 1e3:.0f}k ha"
-    else:
-        return f"{sign}{abs_val:.0f} ha"
-
-
-def _format_water(m3_value):
-    """Format water volume (m³) into B m³ or M m³."""
-    if pd.isna(m3_value) or m3_value == 0:
-        return "N/A"
-    if abs(m3_value) >= 1e9:
-        return f"{m3_value / 1e9:.1f}B m³"
-    else:
-        return f"{m3_value / 1e6:.0f}M m³"
-
-
-def _format_signed_water(diff_m3):
-    """Format a signed water volume difference into B m³ or M m³."""
-    if pd.isna(diff_m3):
-        return "N/A"
-    sign = "+" if diff_m3 > 0 else ("-" if diff_m3 < 0 else "")
-    abs_val = abs(diff_m3)
-    if abs_val >= 1e9:
-        return f"{sign}{abs_val / 1e9:.1f}B m³"
-    else:
-        return f"{sign}{abs_val / 1e6:.0f}M m³"
+    suffix = f" {unit}" if unit else ""
+    if is_currency:
+        return f"{sign}${num}"
+    return f"{sign}{num}{suffix}"
 
 
 def render_incumbent_badge(
@@ -331,26 +292,9 @@ def render_dynamic_comparative_advantage_matrix():
     y_mid = float(df['deficit_per_ha'].median())
 
     # Static benchmarks: top-10 incumbent producer medians with robust fallback
-    incumbent_df = df_raw[df_raw['country'].isin(DEFAULT_COUNTRIES)].dropna(
-        subset=['avg_lcow', 'deficit_per_ha']
-    )
-    if (
-        not incumbent_df.empty
-        and 'avg_lcow' in incumbent_df.columns
-        and pd.notna(incumbent_df['avg_lcow'].median())
-    ):
-        incumbent_lcow = float(incumbent_df['avg_lcow'].median())
-    else:
-        incumbent_lcow = 0.9696
-
-    if (
-        not incumbent_df.empty
-        and 'deficit_per_ha' in incumbent_df.columns
-        and pd.notna(incumbent_df['deficit_per_ha'].median())
-    ):
-        incumbent_deficit = float(incumbent_df['deficit_per_ha'].median())
-    else:
-        incumbent_deficit = 1004.0
+    inc_benchmarks = get_incumbent_benchmarks()
+    incumbent_lcow = inc_benchmarks['lcow']
+    incumbent_deficit = inc_benchmarks['deficit']
 
     # Fit axes and tick spacing to the selected values with comfortable headroom
     x_data_max = max(float(df['avg_lcow'].max()), 0.0)
@@ -426,7 +370,7 @@ def render_dynamic_comparative_advantage_matrix():
             area_display = round(float(vha) / 1e6, 1) if pd.notna(vha) else 0.0
 
         exp_val = row.get('total_exposure')
-        exposure_display = _format_exposure(float(exp_val)) if pd.notna(exp_val) else "$0"
+        exposure_display = format_magnitude(float(exp_val), is_currency=True) if (pd.notna(exp_val) and float(exp_val) != 0) else "$0"
 
         fig.add_trace(go.Scatter(
             x=[row['avg_lcow']],
@@ -479,6 +423,20 @@ def render_dynamic_comparative_advantage_matrix():
     # ==================================================================
     # Reference Line Annotations (4 Conflict-Free Anchored Badges)
     # ==================================================================
+    # Theme-adaptive styling based on st.context.theme
+    is_dark = True
+    if hasattr(st, "context") and hasattr(st.context, "theme"):
+        theme_type = getattr(st.context.theme, "type", None) or (
+            st.context.theme.get("type") if isinstance(st.context.theme, dict) else None
+        )
+        if theme_type == "light":
+            is_dark = False
+
+    chart_font_color = "#f3f4f6" if is_dark else "#111827"
+    chart_subtext_color = "#9ca3af" if is_dark else "#4b5563"
+    chart_grid_color = "#2c2f36" if is_dark else "#e5e7eb"
+    annotation_bg = "rgba(24,25,28,0.85)" if is_dark else "rgba(255,255,255,0.92)"
+
     # Reference Line Annotations (Inward-anchored to prevent overlap with quadrant corner labels)
     # Label 1: Selection LCOW -> Upper region of vertical line
     fig.add_annotation(
@@ -487,7 +445,7 @@ def render_dynamic_comparative_advantage_matrix():
         text=f"Selection median LCOW: ${x_mid:.2f}/m³",
         showarrow=False,
         font=dict(size=9, color="#8a8f98"),
-        bgcolor="rgba(24,25,28,0.85)", bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
+        bgcolor=annotation_bg, bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
     )
     # Label 2: Incumbent LCOW -> Lower region of vertical line
     fig.add_annotation(
@@ -496,7 +454,7 @@ def render_dynamic_comparative_advantage_matrix():
         text=f"Incumbent median LCOW: ${incumbent_lcow:.2f}/m³",
         showarrow=False,
         font=dict(size=9, color="#ef4444"),
-        bgcolor="rgba(24,25,28,0.85)", bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
+        bgcolor=annotation_bg, bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
     )
     # Label 3: Selection Deficit -> Inward right portion of horizontal line
     fig.add_annotation(
@@ -505,7 +463,7 @@ def render_dynamic_comparative_advantage_matrix():
         text=f"Selection median deficit: {y_mid:,.0f} m³/ha",
         showarrow=False,
         font=dict(size=9, color="#8a8f98"),
-        bgcolor="rgba(24,25,28,0.85)", bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
+        bgcolor=annotation_bg, bordercolor="#8a8f98", borderwidth=0.8, borderpad=3,
     )
     # Label 4: Incumbent Deficit -> Inward left portion of horizontal line
     fig.add_annotation(
@@ -514,7 +472,7 @@ def render_dynamic_comparative_advantage_matrix():
         text=f"Incumbent median deficit: {incumbent_deficit:,.0f} m³/ha",
         showarrow=False,
         font=dict(size=9, color="#ef4444"),
-        bgcolor="rgba(24,25,28,0.85)", bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
+        bgcolor=annotation_bg, bordercolor="#ef4444", borderwidth=0.8, borderpad=3,
     )
 
     # R1/R2: Strategic archetype quadrant labels (sentence case)
@@ -538,18 +496,17 @@ def render_dynamic_comparative_advantage_matrix():
             showarrow=False,
             font=dict(size=10, color=q['color']),
             align=align,
-            bgcolor="rgba(24,25,28,0.82)", borderpad=3,
+            bgcolor=annotation_bg, borderpad=3,
         )
 
     # S1: Full-sentence chart title  &  L2: Axis guidance subtitles
-    # TODO(agent-task: LEAN-08): Make Plotly chart theme-adaptive or transparent (rgba(0,0,0,0)); hardcoded dark background creates visual clash when Streamlit runs in light mode
     fig.update_layout(
         title={
             "text": (
                 "<b>Irrigation feasibility bifurcates between "
                 "volume-heavy Latin America and capital-constrained "
                 "East Africa</b><br>"
-                "<span style='font-size:11px; color:#9ca3af;'>"
+                f"<span style='font-size:11px; color:{chart_subtext_color};'>"
                 "Data source: coffee_adaptation_matrix.csv · "
                 "Bubble size ∝ total viable adaptation footprint (ha)"
                 "</span>"
@@ -557,66 +514,58 @@ def render_dynamic_comparative_advantage_matrix():
             "x": 0.02,
             "xanchor": "left",
         },
+        font=dict(color=chart_font_color),
         xaxis=dict(
             title=(
                 "<b>Average irrigation cost ($/m³)</b><br>"
-                "<span style='font-size:10px; color:#9ca3af;'>"
+                f"<span style='font-size:10px; color:{chart_subtext_color};'>"
                 "→ Rightward: deeper aquifers, remote surface access, "
                 "higher pump energy costs</span>"
             ),
             range=[0.0, x_max],
-            gridcolor="#2c2f36",
+            gridcolor=chart_grid_color,
+            color=chart_font_color,
             zeroline=False,
         ),
         yaxis=dict(
             title=(
                 "<b>Average irrigation demand (m³ / viable hectare)</b>"
-                "<br><span style='font-size:10px; color:#9ca3af;'>"
+                f"<br><span style='font-size:10px; color:{chart_subtext_color};'>"
                 "↑ Upward: longer dry seasons, elevated atmospheric "
                 "vapor pressure deficit</span>"
             ),
             range=[0, y_max],
-            gridcolor="#2c2f36",
+            gridcolor=chart_grid_color,
+            color=chart_font_color,
             zeroline=False,
         ),
-        plot_bgcolor="#18191c",
-        paper_bgcolor="#0e1117",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(
             title=dict(
                 text="<b>Producer</b>",
-                font=dict(size=11, color="#ffffff"),
+                font=dict(size=11, color=chart_font_color),
             ),
             orientation="v",
             yanchor="top",
             y=1.0,
             xanchor="left",
             x=1.02,
-            font=dict(color="#ffffff"),
+            font=dict(color=chart_font_color),
         ),
         margin=dict(l=80, r=160, t=100, b=80),
         height=650,
     )
+
 
     st.plotly_chart(fig, width="stretch")
 
     # ==================================================================
     # E1: Country Explode Drawer — National adaptation exposure details
     # ==================================================================
-    inc_exposure = (
-        float(incumbent_df['total_exposure'].median())
-        if (not incumbent_df.empty and 'total_exposure' in incumbent_df.columns and pd.notna(incumbent_df['total_exposure'].median()))
-        else 3384322371.0
-    )
-    inc_viable_ha = (
-        float(incumbent_df['total_viable_ha'].median())
-        if (not incumbent_df.empty and 'total_viable_ha' in incumbent_df.columns and pd.notna(incumbent_df['total_viable_ha'].median()))
-        else 11878955.0
-    )
-    inc_total_m3 = (
-        float(incumbent_df['total_m3'].median())
-        if (not incumbent_df.empty and 'total_m3' in incumbent_df.columns and pd.notna(incumbent_df['total_m3'].median()))
-        else 10016459944.0
-    )
+    inc_exposure = inc_benchmarks['exposure']
+    inc_viable_ha = inc_benchmarks['viable_ha']
+    inc_total_m3 = inc_benchmarks['total_m3']
 
     with st.expander(
         ":material/analytics: Drill down — national adaptation exposure "
@@ -656,80 +605,40 @@ def render_dynamic_comparative_advantage_matrix():
                         lcow_val = float(row['avg_lcow']) if pd.notna(row.get('avg_lcow')) else 0.0
                         deficit_val = float(row['deficit_per_ha']) if pd.notna(row.get('deficit_per_ha')) else 0.0
 
-                        # TODO(agent-task: LEAN-09): Streamline expander drill-down cards with data-driven loop across metrics (saves ~70 lines)
-                        # 1. National adaptation exposure
-                        st.metric(
-                            "National adaptation exposure",
-                            _format_exposure(exposure),
-                        )
-                        render_incumbent_badge(
-                            val=exposure,
-                            inc_val=inc_exposure,
-                            inc_str=_format_exposure(inc_exposure),
-                            diff_str=_format_signed_exposure(exposure - inc_exposure),
-                            label="Incumbent med",
-                            higher_is_better=False,
-                        )
+                        metrics_to_render = [
+                            ("National adaptation exposure", exposure, inc_exposure, "", True, False, 1),
+                            ("Total viable footprint", viable_ha, inc_viable_ha, "ha", False, True, 1),
+                            ("Total water volume needed", total_m3, inc_total_m3, "m³", False, False, 1),
+                            ("Avg LCOW", lcow_val, incumbent_lcow, "/m³", True, False, 2),
+                            ("Avg deficit", deficit_val, incumbent_deficit, "m³/ha", False, False, 0),
+                        ]
 
-                        # 2. Total viable footprint (higher is better)
-                        st.metric(
-                            "Total viable footprint",
-                            _format_area(viable_ha),
-                        )
-                        render_incumbent_badge(
-                            val=viable_ha,
-                            inc_val=inc_viable_ha,
-                            inc_str=_format_area(inc_viable_ha),
-                            diff_str=_format_signed_area(viable_ha - inc_viable_ha),
-                            label="Incumbent med",
-                            higher_is_better=True,
-                        )
+                        for label, val, inc_val, unit, is_curr, hib, dec in metrics_to_render:
+                            if unit in ["ha", "m³"] or (is_curr and unit == ""):
+                                val_str = format_magnitude(val, unit=unit, is_currency=is_curr, decimals=dec)
+                                inc_str = format_magnitude(inc_val, unit=unit, is_currency=is_curr, decimals=dec)
+                                diff_str = format_magnitude(val - inc_val, unit=unit, is_currency=is_curr, signed=True, decimals=dec)
+                            elif is_curr:
+                                val_str = f"${val:.{dec}f}{unit}"
+                                inc_str = f"${inc_val:.{dec}f}{unit}"
+                                diff = val - inc_val
+                                diff_sign = "+" if diff > 0 else ("-" if diff < 0 else "")
+                                diff_str = f"{diff_sign}${abs(diff):.{dec}f}{unit}"
+                            else:
+                                val_str = f"{val:,.{dec}f} {unit}".strip()
+                                inc_str = f"{inc_val:,.{dec}f} {unit}".strip()
+                                diff_str = f"{val - inc_val:+,.{dec}f} {unit}".strip()
 
-                        # 3. Total water volume needed
-                        st.metric(
-                            "Total water volume needed",
-                            _format_water(total_m3),
-                        )
-                        render_incumbent_badge(
-                            val=total_m3,
-                            inc_val=inc_total_m3,
-                            inc_str=_format_water(inc_total_m3),
-                            diff_str=_format_signed_water(total_m3 - inc_total_m3),
-                            label="Incumbent med",
-                            higher_is_better=False,
-                        )
+                            st.metric(label, val_str)
+                            render_incumbent_badge(
+                                val=val,
+                                inc_val=inc_val,
+                                inc_str=inc_str,
+                                diff_str=diff_str,
+                                label="Incumbent med",
+                                higher_is_better=hib,
+                            )
 
-                        # 4. Avg LCOW
-                        lcow_diff = lcow_val - incumbent_lcow
-                        lcow_diff_str = f"{'+' if lcow_diff > 0 else ('-' if lcow_diff < 0 else '')}${abs(lcow_diff):.2f}/m³"
-                        st.metric(
-                            "Avg LCOW",
-                            f"${lcow_val:.2f}/m³",
-                        )
-                        render_incumbent_badge(
-                            val=lcow_val,
-                            inc_val=incumbent_lcow,
-                            inc_str=f"${incumbent_lcow:.2f}/m³",
-                            diff_str=lcow_diff_str,
-                            label="Incumbent med",
-                            higher_is_better=False,
-                        )
-
-                        # 5. Avg deficit
-                        def_diff = deficit_val - incumbent_deficit
-                        def_diff_str = f"{def_diff:+,.0f} m³/ha"
-                        st.metric(
-                            "Avg deficit",
-                            f"{deficit_val:,.0f} m³/ha",
-                        )
-                        render_incumbent_badge(
-                            val=deficit_val,
-                            inc_val=incumbent_deficit,
-                            inc_str=f"{incumbent_deficit:,.0f} m³/ha",
-                            diff_str=def_diff_str,
-                            label="Incumbent med",
-                            higher_is_better=False,
-                        )
 
     # ==================================================================
     # E3: Full Portfolio Comparison Table
